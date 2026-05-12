@@ -15,6 +15,7 @@ Open `http://localhost:8000`.
 
 - Filterable task list by issue type, severity, trainer, risk, overlaps, and group-cover macro segments.
 - Dashboard metrics for filtered tasks.
+- Parsed model-output dataset from `models_evals.md`, filterable by episode and model.
 - Original vs final timeline comparison.
 - Final segment overlap highlights.
 - Final gap highlights.
@@ -32,4 +33,6 @@ The app reads generated JSON files from `data/`:
 - `issues.json`
 - `overlaps.json`
 - `covering_segments.json`
+- `model_eval_segments.json`
+- `model_eval_summary.json`
 - `summary.json`
