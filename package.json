@@ -1,0 +1,6 @@
+{
+  "scripts": {
+    "build": "rm -rf dist && cp -R zion_eval_app dist"
+  },
+  "devDependencies": {}
+}
