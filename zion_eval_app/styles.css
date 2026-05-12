@@ -291,6 +291,11 @@ button:hover {
   border-color: var(--accent);
 }
 
+.small-button {
+  padding: 8px 11px;
+  font-size: 12px;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(120px, 1fr));
@@ -310,6 +315,10 @@ button:hover {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.eval-info-grid.collapsed {
+  display: none;
 }
 
 .eval-info-card {

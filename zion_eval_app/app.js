@@ -8,6 +8,7 @@ const state = {
   coveringSegments: [],
   selectedTaskId: null,
   selectedSegmentId: null,
+  evalInfoCollapsed: false,
   filters: {
     search: "",
     issueType: "all",
@@ -22,6 +23,7 @@ const state = {
     overlapOnly: false,
     groupCoverOnly: false,
     criticalOnly: false,
+    noFlagsOnly: false,
     issuesOnlyTimeline: false,
     zoom: 1,
   },
@@ -170,11 +172,13 @@ async function init() {
     els.overlapOnly,
     els.groupCoverOnly,
     els.criticalOnly,
+    els.noFlagsOnly,
     els.zoomRange,
     els.issuesOnlyTimeline,
     els.resetFiltersBtn,
     els.exportFilteredBtn,
     els.exportTypeSelect,
+    els.toggleEvalInfoBtn,
   ] = [
     $("searchInput"),
     $("issueTypeSelect"),
@@ -189,11 +193,13 @@ async function init() {
     $("overlapOnly"),
     $("groupCoverOnly"),
     $("criticalOnly"),
+    $("noFlagsOnly"),
     $("zoomRange"),
     $("issuesOnlyTimeline"),
     $("resetFiltersBtn"),
     $("exportFilteredBtn"),
     $("exportTypeSelect"),
+    $("toggleEvalInfoBtn"),
   ];
 
   const [summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments] = await Promise.all([
@@ -278,6 +284,10 @@ function bindEvents() {
     state.filters.criticalOnly = els.criticalOnly.checked;
     renderAll();
   });
+  els.noFlagsOnly.addEventListener("change", () => {
+    state.filters.noFlagsOnly = els.noFlagsOnly.checked;
+    renderAll();
+  });
   els.zoomRange.addEventListener("input", () => {
     state.filters.zoom = Number(els.zoomRange.value);
     renderTimeline();
@@ -288,6 +298,10 @@ function bindEvents() {
   });
   els.resetFiltersBtn.addEventListener("click", resetFilters);
   els.exportFilteredBtn.addEventListener("click", exportFilteredCsv);
+  els.toggleEvalInfoBtn.addEventListener("click", () => {
+    state.evalInfoCollapsed = !state.evalInfoCollapsed;
+    renderEvalInfo();
+  });
 }
 
 function resetFilters() {
@@ -305,6 +319,7 @@ function resetFilters() {
     overlapOnly: false,
     groupCoverOnly: false,
     criticalOnly: false,
+    noFlagsOnly: false,
     issuesOnlyTimeline: false,
     zoom: 1,
   });
@@ -321,6 +336,7 @@ function resetFilters() {
   els.overlapOnly.checked = false;
   els.groupCoverOnly.checked = false;
   els.criticalOnly.checked = false;
+  els.noFlagsOnly.checked = false;
   els.issuesOnlyTimeline.checked = false;
   els.zoomRange.value = "1";
   renderAll();
@@ -400,6 +416,7 @@ function filteredTasks() {
     if (state.filters.overlapOnly && !task.overlap_count) return false;
     if (state.filters.groupCoverOnly && !task.group_cover_count) return false;
     if (state.filters.criticalOnly && !task.critical_count) return false;
+    if (state.filters.noFlagsOnly && task.issue_count !== 0) return false;
     if (!isWithinDateRange(task.date_created, state.filters.createdFrom, state.filters.createdTo)) return false;
     if (!isWithinDateRange(task.date_updated, state.filters.updatedFrom, state.filters.updatedTo)) return false;
     if (state.filters.issueType !== "all" && !taskIssues.some((issue) => issue.eval_name === state.filters.issueType)) return false;
@@ -430,6 +447,12 @@ function renderAll() {
 }
 
 function renderEvalInfo() {
+  els.toggleEvalInfoBtn.textContent = state.evalInfoCollapsed ? "Expand" : "Collapse";
+  $("evalInfoGrid").classList.toggle("collapsed", state.evalInfoCollapsed);
+  if (state.evalInfoCollapsed) {
+    $("evalInfoGrid").innerHTML = "";
+    return;
+  }
   $("evalInfoGrid").innerHTML = EVAL_INFO.map((info) => {
     const count = state.summary.eval_counts?.[info.name] || 0;
     return `
