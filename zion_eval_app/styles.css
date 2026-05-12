@@ -410,6 +410,28 @@ button:hover {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  z-index: 2;
+}
+
+.model-overlap-band,
+.model-gap-band {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.model-overlap-band {
+  background: rgba(255, 107, 107, 0.26);
+  border-left: 1px solid var(--critical);
+  border-right: 1px solid var(--critical);
+}
+
+.model-gap-band {
+  background: rgba(240, 217, 107, 0.22);
+  border-left: 1px dashed var(--medium);
+  border-right: 1px dashed var(--medium);
 }
 
 .model-mini-segment.tone-0 {
