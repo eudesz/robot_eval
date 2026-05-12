@@ -26,6 +26,7 @@ const state = {
     createdTo: "",
     updatedFrom: "",
     updatedTo: "",
+    modelEvalOnly: false,
     overlapOnly: false,
     groupCoverOnly: false,
     criticalOnly: false,
@@ -175,6 +176,7 @@ async function init() {
     els.createdToInput,
     els.updatedFromInput,
     els.updatedToInput,
+    els.modelEvalOnly,
     els.overlapOnly,
     els.groupCoverOnly,
     els.criticalOnly,
@@ -198,6 +200,7 @@ async function init() {
     $("createdToInput"),
     $("updatedFromInput"),
     $("updatedToInput"),
+    $("modelEvalOnly"),
     $("overlapOnly"),
     $("groupCoverOnly"),
     $("criticalOnly"),
@@ -298,6 +301,14 @@ function bindEvents() {
       renderAll();
     });
   }
+  els.modelEvalOnly.addEventListener("change", () => {
+    state.filters.modelEvalOnly = els.modelEvalOnly.checked;
+    if (state.filters.modelEvalOnly && state.modelFilters.episode === "all") {
+      state.modelFilters.episode = state.modelSummary?.episodes?.[0]?.episode_id || "all";
+      els.modelEpisodeSelect.value = state.modelFilters.episode;
+    }
+    renderAll();
+  });
   els.overlapOnly.addEventListener("change", () => {
     state.filters.overlapOnly = els.overlapOnly.checked;
     renderAll();
@@ -350,6 +361,7 @@ function resetFilters() {
     createdTo: "",
     updatedFrom: "",
     updatedTo: "",
+    modelEvalOnly: false,
     overlapOnly: false,
     groupCoverOnly: false,
     criticalOnly: false,
@@ -367,6 +379,7 @@ function resetFilters() {
   els.createdToInput.value = "";
   els.updatedFromInput.value = "";
   els.updatedToInput.value = "";
+  els.modelEvalOnly.checked = false;
   els.overlapOnly.checked = false;
   els.groupCoverOnly.checked = false;
   els.criticalOnly.checked = false;
@@ -441,10 +454,33 @@ function groupCoversForTask(taskId) {
   return state.coveringSegments.filter((cover) => cover.task_id === taskId);
 }
 
+function modelEvalEpisodeIds() {
+  return new Set((state.modelSummary?.episodes || []).flatMap((episode) => [
+    episode.episode_id,
+    episode.episode_uuid,
+  ]));
+}
+
+function isModelEvalTask(task, episodeIds = modelEvalEpisodeIds()) {
+  const fields = [
+    task.task_id,
+    task.client_folder_name,
+    task.source_uuid,
+    task.uuid,
+    task.short,
+  ].filter(Boolean);
+  return fields.some((value) => {
+    const text = String(value);
+    return episodeIds.has(text) || episodeIds.has(text.slice(0, 8));
+  });
+}
+
 function filteredTasks() {
+  const modelEpisodeIds = modelEvalEpisodeIds();
   const filtered = state.tasks.filter((task) => {
     const taskIssues = issuesForTask(task.task_id);
     const haystack = `${task.task_id} ${task.task_name} ${task.client_folder_name} ${task.trainer_user_id}`.toLowerCase();
+    if (state.filters.modelEvalOnly && !isModelEvalTask(task, modelEpisodeIds)) return false;
     if (state.filters.search && !haystack.includes(state.filters.search)) return false;
     if (state.filters.trainer !== "all" && task.trainer_user_id !== state.filters.trainer) return false;
     if (state.filters.overlapOnly && !task.overlap_count) return false;
@@ -471,7 +507,7 @@ function filteredTasks() {
 
 function renderAll() {
   const tasks = filteredTasks();
-  if (!tasks.some((task) => task.task_id === state.selectedTaskId)) {
+  if (!state.filters.modelEvalOnly && !tasks.some((task) => task.task_id === state.selectedTaskId)) {
     state.selectedTaskId = tasks[0]?.task_id || state.tasks[0]?.task_id || null;
   }
   renderStats(tasks);
@@ -614,6 +650,10 @@ function renderStats(tasks) {
 }
 
 function renderTaskList(tasks) {
+  if (state.filters.modelEvalOnly) {
+    renderModelEpisodeList();
+    return;
+  }
   $("taskCount").textContent = fmt(tasks.length);
   $("taskList").innerHTML = tasks
     .slice(0, 250)
@@ -641,6 +681,41 @@ function renderTaskList(tasks) {
     card.addEventListener("click", () => {
       state.selectedTaskId = card.dataset.taskId;
       state.selectedSegmentId = null;
+      renderAll();
+    });
+  });
+}
+
+function renderModelEpisodeList() {
+  const episodes = (state.modelSummary?.episodes || []).filter((episode) => {
+    const haystack = `${episode.episode_id} ${episode.episode_uuid} ${episode.task_name}`.toLowerCase();
+    return !state.filters.search || haystack.includes(state.filters.search);
+  });
+  $("taskCount").textContent = fmt(episodes.length);
+  $("taskList").innerHTML = episodes
+    .map((episode) => {
+      const runs = state.modelSummary.model_runs.filter((run) => run.episode_id === episode.episode_id);
+      const active = state.modelFilters.episode === episode.episode_id ? "active" : "";
+      const segmentCount = state.modelSegments.filter((row) => row.episode_id === episode.episode_id && row.caption).length;
+      return `
+        <article class="task-card ${active}" data-model-episode-id="${escapeHtml(episode.episode_id)}">
+          <div class="task-card-title">
+            <span>${escapeHtml(episode.task_name || "Untitled episode")}</span>
+            <span>${fmt(runs.length)}</span>
+          </div>
+          <div class="task-meta">${escapeHtml(episode.episode_id)} · ${escapeHtml(episode.episode_uuid)} · ${fmt(episode.duration_secs, 1)}s</div>
+          <div class="badge-row">
+            <span class="badge">${fmt(runs.length)} model runs</span>
+            <span class="badge medium">${fmt(segmentCount)} segments</span>
+          </div>
+        </article>`;
+    })
+    .join("");
+
+  document.querySelectorAll("[data-model-episode-id]").forEach((card) => {
+    card.addEventListener("click", () => {
+      state.modelFilters.episode = card.dataset.modelEpisodeId;
+      els.modelEpisodeSelect.value = state.modelFilters.episode;
       renderAll();
     });
   });
