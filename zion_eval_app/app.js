@@ -548,6 +548,16 @@ function renderModelRunCard(runRows) {
   `;
 }
 
+function statCard(label, value, sub = "") {
+  return `
+    <div class="stat">
+      <div class="stat-value">${escapeHtml(String(value))}</div>
+      <div class="stat-label">${escapeHtml(label)}</div>
+      ${sub ? `<div class="stat-label">${escapeHtml(sub)}</div>` : ""}
+    </div>
+  `;
+}
+
 function renderEvalInfo() {
   els.toggleEvalInfoBtn.textContent = state.evalInfoCollapsed ? "Expand" : "Collapse";
   $("evalInfoGrid").classList.toggle("collapsed", state.evalInfoCollapsed);
