@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zion Final Annotation EVALs</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="eyebrow">Zion QA</div>
+          <h1>Final Annotation EVALs</h1>
+          <p>Review internal inconsistencies without watching the video.</p>
+        </div>
+
+        <section class="filters">
+          <label>
+            Search
+            <input id="searchInput" type="search" placeholder="task, id, trainer..." />
+          </label>
+
+          <label>
+            Issue Type
+            <select id="issueTypeSelect">
+              <option value="all">All issue types</option>
+            </select>
+          </label>
+
+          <label>
+            Severity
+            <select id="severitySelect">
+              <option value="all">All severities</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+
+          <label>
+            Trainer
+            <select id="trainerSelect">
+              <option value="all">All trainers</option>
+            </select>
+          </label>
+
+          <label>
+            Sort By
+            <select id="sortSelect">
+              <option value="risk">Risk score</option>
+              <option value="overlaps">Overlap count</option>
+              <option value="issues">Issue count</option>
+              <option value="duration">Duration</option>
+              <option value="updated">Date updated</option>
+            </select>
+          </label>
+
+          <div class="toggle-row">
+            <label class="checkbox"><input id="overlapOnly" type="checkbox" /> Has overlap</label>
+            <label class="checkbox"><input id="groupCoverOnly" type="checkbox" /> Has group cover</label>
+            <label class="checkbox"><input id="criticalOnly" type="checkbox" /> Critical only</label>
+          </div>
+        </section>
+
+        <section class="task-list-section">
+          <div class="section-header">
+            <h2>Tasks</h2>
+            <span id="taskCount">0</span>
+          </div>
+          <div id="taskList" class="task-list"></div>
+        </section>
+      </aside>
+
+      <main class="main">
+        <section class="hero">
+          <div>
+            <div class="eyebrow">Audit Dashboard</div>
+            <h2 id="selectedTitle">Loading...</h2>
+            <p id="selectedSubtitle">Parsing final annotation data.</p>
+          </div>
+          <div class="actions">
+            <select id="exportTypeSelect" aria-label="Export type">
+              <option value="tasks_csv">Filtered Tasks CSV</option>
+              <option value="issues_csv">Filtered Issues CSV</option>
+              <option value="overlaps_csv">Filtered Overlaps CSV</option>
+              <option value="group_covers_csv">Filtered Group Covers CSV</option>
+              <option value="bundle_json">Filtered Bundle JSON</option>
+            </select>
+            <button id="exportFilteredBtn" type="button">Download Export</button>
+            <button id="resetFiltersBtn" type="button">Reset Filters</button>
+          </div>
+        </section>
+
+        <section id="statsGrid" class="stats-grid"></section>
+
+        <section class="eval-info-panel">
+          <div class="panel-header">
+            <div>
+              <h3>What These EVALs Check</h3>
+              <p>
+                These checks use only CSV data and final annotations. They detect internal inconsistencies,
+                not whether the video content is visually correct.
+              </p>
+            </div>
+          </div>
+          <div id="evalInfoGrid" class="eval-info-grid"></div>
+        </section>
+
+        <section class="workspace">
+          <div class="timeline-panel">
+            <div class="panel-header">
+              <div>
+                <h3>Original vs Final Timeline</h3>
+                <p>Blue bands show original overlaps, red bands show final overlaps, yellow bands show final gaps, and violet outlines show macro group-cover segments.</p>
+              </div>
+              <div class="timeline-controls">
+                <label>
+                  Zoom
+                  <input id="zoomRange" type="range" min="1" max="8" step="0.5" value="1" />
+                </label>
+                <label class="checkbox"><input id="issuesOnlyTimeline" type="checkbox" /> Show issue segments</label>
+              </div>
+            </div>
+            <div id="timeline" class="timeline"></div>
+          </div>
+
+          <div class="selected-segment-panel">
+            <div class="panel-header compact">
+              <h3>Selected Segment</h3>
+              <span id="selectedSegmentBadge" class="badge">None</span>
+            </div>
+            <div id="selectedSegmentDetail" class="selected-segment-detail"></div>
+          </div>
+
+          <aside class="detail-panel">
+            <div class="panel-header compact">
+              <h3>Task Detail</h3>
+              <span id="riskBadge" class="badge">Risk</span>
+            </div>
+            <div id="taskDetail" class="detail-content"></div>
+          </aside>
+        </section>
+
+        <section class="bottom-grid">
+          <div class="issues-panel">
+            <div class="panel-header compact">
+              <h3>Detected Issues</h3>
+              <span id="issueCountForTask">0</span>
+            </div>
+            <div id="issuesList" class="issues-list"></div>
+          </div>
+
+          <div class="issues-panel">
+            <div class="panel-header compact">
+              <h3>Overlap Pairs</h3>
+              <span id="overlapCountForTask">0</span>
+            </div>
+            <div id="overlapList" class="issues-list"></div>
+          </div>
+
+          <div class="issues-panel">
+            <div class="panel-header compact">
+              <h3>Group Cover Segments</h3>
+              <span id="groupCoverCountForTask">0</span>
+            </div>
+            <div id="groupCoverList" class="issues-list"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
