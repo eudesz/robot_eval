@@ -119,10 +119,14 @@ By default, a task should **not** be sent to LLM if it has any issue from these 
 - `segment_overlap_eval`: final segments overlap in time.
 - `segment_group_cover_eval`: a long final segment appears to cover a group of smaller final segments within its time range.
 - `timestamp_gap_eval`: large gaps between final segments.
+- `timestamp_validity_eval`: invalid timestamp ranges, such as `start >= end` or segment bounds outside video duration.
 - `object_reference_eval`: exact object name mismatch or notes pointing to missing inventory.
+- `object_label_consistency_eval`: untranslated or mixed object labels, such as `tapa` instead of `lid`.
 - `zion_language_policy_eval`: obvious keyword violations.
 - `no_action_segment_eval`: no-action captions with action verbs.
+- `missing_hand_annotations_eval`: possible single-hand label when caption text suggests coordinated two-hand interaction.
 - `segment_granularity_eval`: very long or very short segments.
+- `over_segmentation_eval`: more than three sub-actions in a segment shorter than two seconds.
 - `caption_visual_evidence_eval`: caption/evidence divergence.
 
 ### 4.3 Recommended Gate Strictness
@@ -388,7 +392,7 @@ You are a strict QA judge for Zion final annotations.
 
 You evaluate only the provided final annotation JSON. You cannot see the video. You must not claim whether the visual content is correct. You must identify semantic internal inconsistencies that can be inferred from the text alone.
 
-This task has already passed deterministic EVALs before reaching you. Do not re-evaluate deterministic issues such as overlaps, gaps, timestamp formatting, invalid time ranges, missing fields, phase index order, covered marker format, coverage, or duration thresholds. If your only evidence is a deterministic issue, do not output it.
+This task has already passed deterministic EVALs before reaching you. Do not re-evaluate deterministic issues such as overlaps, macro segments covering child groups, gaps, timestamp validity, object inventory exact-reference checks, untranslated object labels, obvious Zion keyword violations, no-action/action conflicts, possible missing hand annotations, duration/granularity thresholds, over-segmentation thresholds, or caption/visual-evidence divergence. If your only evidence is a deterministic issue, do not output it.
 
 Zion annotations describe observable left-hand, right-hand, or both-hand actions. They should avoid body/head/viewpoint movement and internal mental states. Objects should be described consistently using standalone descriptions. Action flow should be chronological and logically traceable: pick or reach -> grasp -> manipulate/use -> place/release/return where applicable.
 
@@ -418,10 +422,15 @@ Focus on:
 
 Do NOT evaluate:
 - segment overlaps
+- macro segments that cover child groups
 - timestamp gaps
-- timestamp format
+- timestamp validity
 - start/end consistency
 - out-of-duration segments
+- exact object inventory reference checks
+- untranslated or mixed-language object labels
+- possible missing hand annotations
+- over-segmentation based on action count and duration
 - missing captions or schema errors
 - phase_index order
 - covered_marker format

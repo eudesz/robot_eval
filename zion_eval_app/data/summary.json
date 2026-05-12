@@ -2,14 +2,14 @@
   "task_count": 556,
   "original_segment_count": 6362,
   "final_segment_count": 6400,
-  "issue_count": 2543,
-  "tasks_with_issues": 442,
+  "issue_count": 2716,
+  "tasks_with_issues": 450,
   "overlap_count": 737,
   "tasks_with_overlap": 161,
   "severity_counts": {
-    "medium": 1225,
-    "high": 851,
-    "critical": 441,
+    "medium": 1279,
+    "high": 859,
+    "critical": 552,
     "low": 26
   },
   "eval_counts": {
@@ -18,19 +18,26 @@
     "segment_overlap_eval": 737,
     "zion_language_policy_eval": 491,
     "segment_granularity_eval": 47,
-    "segment_group_cover_eval": 75
+    "segment_group_cover_eval": 75,
+    "timestamp_validity_eval": 111,
+    "over_segmentation_eval": 20,
+    "missing_hand_annotations_eval": 42
   },
   "generated_from": "juno_zion_tasks_export_2026-05-01_to_2026-05-11.csv",
   "group_cover_count": 75,
   "tasks_with_group_cover": 44,
   "active_eval_names": [
     "caption_visual_evidence_eval",
+    "missing_hand_annotations_eval",
     "no_action_segment_eval",
+    "object_label_consistency_eval",
     "object_reference_eval",
+    "over_segmentation_eval",
     "segment_granularity_eval",
     "segment_group_cover_eval",
     "segment_overlap_eval",
     "timestamp_gap_eval",
+    "timestamp_validity_eval",
     "zion_language_policy_eval"
   ],
   "removed_eval_counts": {

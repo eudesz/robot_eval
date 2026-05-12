@@ -125,6 +125,16 @@ select:focus {
   flex-wrap: wrap;
 }
 
+.date-filter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.date-filter-grid input {
+  padding: 9px 10px;
+}
+
 .checkbox {
   display: flex;
   align-items: center;

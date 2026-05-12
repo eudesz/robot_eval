@@ -54,8 +54,39 @@
               <option value="issues">Issue count</option>
               <option value="duration">Duration</option>
               <option value="updated">Date updated</option>
+              <option value="created">Date created</option>
             </select>
           </label>
+
+          <label>
+            Quick Date Range
+            <select id="dateQuickRangeSelect">
+              <option value="all">All dates</option>
+              <option value="today">Today</option>
+              <option value="24h">Last 24h</option>
+              <option value="3d">Last 3 days</option>
+              <option value="7d">Last 7 days</option>
+            </select>
+          </label>
+
+          <div class="date-filter-grid">
+            <label>
+              Created From
+              <input id="createdFromInput" type="date" />
+            </label>
+            <label>
+              Created To
+              <input id="createdToInput" type="date" />
+            </label>
+            <label>
+              Updated From
+              <input id="updatedFromInput" type="date" />
+            </label>
+            <label>
+              Updated To
+              <input id="updatedToInput" type="date" />
+            </label>
+          </div>
 
           <div class="toggle-row">
             <label class="checkbox"><input id="overlapOnly" type="checkbox" /> Has overlap</label>

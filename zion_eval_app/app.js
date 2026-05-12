@@ -14,6 +14,11 @@ const state = {
     severity: "all",
     trainer: "all",
     sort: "risk",
+    dateQuickRange: "all",
+    createdFrom: "",
+    createdTo: "",
+    updatedFrom: "",
+    updatedTo: "",
     overlapOnly: false,
     groupCoverOnly: false,
     criticalOnly: false,
@@ -47,11 +52,25 @@ const EVAL_INFO = [
     limitation: "Some gaps can be valid if nothing relevant happens.",
   },
   {
+    name: "timestamp_validity_eval",
+    severity: "critical",
+    checks: "Invalid timestamp ranges: start must be before end, and segment bounds must fit within video duration.",
+    why: "Invalid timing makes the final annotation unusable for timeline review or training alignment.",
+    limitation: "It checks validity, not whether the timestamp tightly matches the real visual action.",
+  },
+  {
     name: "object_reference_eval",
     severity: "high/medium",
     checks: "Captions that do not exactly reference inventory objects, or consistency notes pointing to missing inventory names.",
     why: "Zion asks for consistent standalone object descriptions across the annotation.",
     limitation: "This can produce false positives when captions use valid synonyms or shortened object names.",
+  },
+  {
+    name: "object_label_consistency_eval",
+    severity: "high/medium",
+    checks: "Untranslated or mixed object labels, such as `tapa` mixed with `lid` or `cap`.",
+    why: "Object labels should be consistently written in English and stable across inventory, notes, and captions.",
+    limitation: "Dictionary-based detection can miss uncommon terms or flag terms that are valid proper names.",
   },
   {
     name: "zion_language_policy_eval",
@@ -68,11 +87,25 @@ const EVAL_INFO = [
     limitation: "Only triggers when both patterns appear in the same caption.",
   },
   {
+    name: "missing_hand_annotations_eval",
+    severity: "medium",
+    checks: "Possible cases where one hand is labeled but the caption suggests coordinated two-hand interaction.",
+    why: "Zion captions should accurately describe left, right, or both-hand participation.",
+    limitation: "Without video this is only a possible issue, because both hands may not actually be visible.",
+  },
+  {
     name: "segment_granularity_eval",
     severity: "high/low",
     checks: "Very long or very short final segments.",
     why: "Long segments often hide merged actions; tiny segments can indicate over-splitting or timestamp noise.",
     limitation: "Duration alone cannot prove a segment should be split or merged.",
+  },
+  {
+    name: "over_segmentation_eval",
+    severity: "high/medium",
+    checks: "More than three action verbs/sub-actions inside a segment shorter than two seconds.",
+    why: "A very short segment with many sub-actions is likely overloaded or temporally implausible.",
+    limitation: "Verb counting is heuristic and should be calibrated with reviewer examples.",
   },
   {
     name: "caption_visual_evidence_eval",
@@ -129,6 +162,11 @@ async function init() {
     els.severitySelect,
     els.trainerSelect,
     els.sortSelect,
+    els.dateQuickRangeSelect,
+    els.createdFromInput,
+    els.createdToInput,
+    els.updatedFromInput,
+    els.updatedToInput,
     els.overlapOnly,
     els.groupCoverOnly,
     els.criticalOnly,
@@ -143,6 +181,11 @@ async function init() {
     $("severitySelect"),
     $("trainerSelect"),
     $("sortSelect"),
+    $("dateQuickRangeSelect"),
+    $("createdFromInput"),
+    $("createdToInput"),
+    $("updatedFromInput"),
+    $("updatedToInput"),
     $("overlapOnly"),
     $("groupCoverOnly"),
     $("criticalOnly"),
@@ -206,6 +249,23 @@ function bindEvents() {
     state.filters.sort = els.sortSelect.value;
     renderAll();
   });
+  els.dateQuickRangeSelect.addEventListener("change", () => {
+    applyQuickDateRange(els.dateQuickRangeSelect.value);
+    renderAll();
+  });
+  for (const [input, key] of [
+    [els.createdFromInput, "createdFrom"],
+    [els.createdToInput, "createdTo"],
+    [els.updatedFromInput, "updatedFrom"],
+    [els.updatedToInput, "updatedTo"],
+  ]) {
+    input.addEventListener("change", () => {
+      state.filters[key] = input.value;
+      state.filters.dateQuickRange = "custom";
+      els.dateQuickRangeSelect.value = "all";
+      renderAll();
+    });
+  }
   els.overlapOnly.addEventListener("change", () => {
     state.filters.overlapOnly = els.overlapOnly.checked;
     renderAll();
@@ -237,6 +297,11 @@ function resetFilters() {
     severity: "all",
     trainer: "all",
     sort: "risk",
+    dateQuickRange: "all",
+    createdFrom: "",
+    createdTo: "",
+    updatedFrom: "",
+    updatedTo: "",
     overlapOnly: false,
     groupCoverOnly: false,
     criticalOnly: false,
@@ -248,12 +313,70 @@ function resetFilters() {
   els.severitySelect.value = "all";
   els.trainerSelect.value = "all";
   els.sortSelect.value = "risk";
+  els.dateQuickRangeSelect.value = "all";
+  els.createdFromInput.value = "";
+  els.createdToInput.value = "";
+  els.updatedFromInput.value = "";
+  els.updatedToInput.value = "";
   els.overlapOnly.checked = false;
   els.groupCoverOnly.checked = false;
   els.criticalOnly.checked = false;
   els.issuesOnlyTimeline.checked = false;
   els.zoomRange.value = "1";
   renderAll();
+}
+
+function parseTaskDate(value) {
+  if (!value) return null;
+  const parsed = new Date(String(value).replace(" ", "T"));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function startOfDateInput(value) {
+  return value ? new Date(`${value}T00:00:00`) : null;
+}
+
+function endOfDateInput(value) {
+  return value ? new Date(`${value}T23:59:59.999`) : null;
+}
+
+function toDateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function applyQuickDateRange(value) {
+  state.filters.dateQuickRange = value;
+  if (value === "all") {
+    Object.assign(state.filters, { createdFrom: "", createdTo: "", updatedFrom: "", updatedTo: "" });
+  } else {
+    const now = new Date();
+    const start = new Date(now);
+    if (value === "today") start.setHours(0, 0, 0, 0);
+    if (value === "24h") start.setDate(start.getDate() - 1);
+    if (value === "3d") start.setDate(start.getDate() - 3);
+    if (value === "7d") start.setDate(start.getDate() - 7);
+    state.filters.createdFrom = "";
+    state.filters.createdTo = "";
+    state.filters.updatedFrom = toDateInputValue(start);
+    state.filters.updatedTo = toDateInputValue(now);
+  }
+  els.createdFromInput.value = state.filters.createdFrom;
+  els.createdToInput.value = state.filters.createdTo;
+  els.updatedFromInput.value = state.filters.updatedFrom;
+  els.updatedToInput.value = state.filters.updatedTo;
+}
+
+function isWithinDateRange(dateValue, fromValue, toValue) {
+  const date = parseTaskDate(dateValue);
+  if (!date && (fromValue || toValue)) return false;
+  const from = startOfDateInput(fromValue);
+  const to = endOfDateInput(toValue);
+  if (from && date < from) return false;
+  if (to && date > to) return false;
+  return true;
 }
 
 function issuesForTask(taskId) {
@@ -277,6 +400,8 @@ function filteredTasks() {
     if (state.filters.overlapOnly && !task.overlap_count) return false;
     if (state.filters.groupCoverOnly && !task.group_cover_count) return false;
     if (state.filters.criticalOnly && !task.critical_count) return false;
+    if (!isWithinDateRange(task.date_created, state.filters.createdFrom, state.filters.createdTo)) return false;
+    if (!isWithinDateRange(task.date_updated, state.filters.updatedFrom, state.filters.updatedTo)) return false;
     if (state.filters.issueType !== "all" && !taskIssues.some((issue) => issue.eval_name === state.filters.issueType)) return false;
     if (state.filters.severity !== "all" && !taskIssues.some((issue) => issue.severity === state.filters.severity)) return false;
     return true;
@@ -288,6 +413,7 @@ function filteredTasks() {
     issues: (a, b) => b.issue_count - a.issue_count,
     duration: (a, b) => b.final_duration_secs - a.final_duration_secs,
     updated: (a, b) => String(b.date_updated).localeCompare(String(a.date_updated)),
+    created: (a, b) => String(b.date_created).localeCompare(String(a.date_created)),
   };
   return filtered.sort(sorters[state.filters.sort] || sorters.risk);
 }
