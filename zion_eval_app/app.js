@@ -484,9 +484,13 @@ function hydrateFilters() {
 }
 
 function hydrateDynamicFilters() {
-  const issueTypes = [...new Set(state.issues.map((issue) => issue.eval_name))].sort();
+  const issueTypes = [...new Set([
+    ...EVAL_INFO.map((info) => info.name),
+    ...state.issues.map((issue) => issue.eval_name),
+  ])].sort();
   const currentIssueTypes = new Set(state.filters.issueTypes || []);
   els.issueTypeMenu.innerHTML = [
+    `<button class="multi-select-action" type="button" data-issue-action="select-all">Select all issue types</button>`,
     `<button class="multi-select-action" type="button" data-issue-action="clear">Clear selection</button>`,
     ...issueTypes.map((type) => `
       <label class="multi-select-option">
@@ -507,6 +511,7 @@ function hydrateDynamicFilters() {
 function hydrateSegmentIssueTypeMenu(issueTypes) {
   const currentSegmentIssueTypes = new Set(state.filters.segmentIssueTypes || []);
   els.segmentIssueTypeMenu.innerHTML = [
+    `<button class="multi-select-action" type="button" data-segment-issue-action="select-all">Select all segment issues</button>`,
     `<button class="multi-select-action" type="button" data-segment-issue-action="clear">Clear selection</button>`,
     ...issueTypes.map((type) => `
       <label class="multi-select-option">
@@ -557,6 +562,14 @@ function bindEvents() {
     renderAll();
   });
   els.issueTypeMenu.addEventListener("click", (event) => {
+    if (event.target.dataset.issueAction === "select-all") {
+      els.issueTypeMenu.querySelectorAll("input").forEach((input) => {
+        input.checked = true;
+      });
+      state.filters.issueTypes = [...els.issueTypeMenu.querySelectorAll("input")].map((input) => input.value);
+      renderIssueTypeSummary();
+      renderAll();
+    }
     if (event.target.dataset.issueAction === "clear") {
       state.filters.issueTypes = [];
       els.issueTypeMenu.querySelectorAll("input").forEach((input) => {
@@ -573,6 +586,15 @@ function bindEvents() {
     renderTimeline();
   });
   els.segmentIssueTypeMenu.addEventListener("click", (event) => {
+    if (event.target.dataset.segmentIssueAction === "select-all") {
+      els.segmentIssueTypeMenu.querySelectorAll("input").forEach((input) => {
+        input.checked = true;
+      });
+      state.filters.segmentIssueTypes = [...els.segmentIssueTypeMenu.querySelectorAll("input")].map((input) => input.value);
+      renderSegmentIssueTypeSummary();
+      els.segmentIssueTypeMenu.hidden = true;
+      renderTimeline();
+    }
     if (event.target.dataset.segmentIssueAction === "clear") {
       state.filters.segmentIssueTypes = [];
       els.segmentIssueTypeMenu.querySelectorAll("input").forEach((input) => {
