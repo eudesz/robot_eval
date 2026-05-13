@@ -6,14 +6,8 @@ const state = {
   issues: [],
   overlaps: [],
   coveringSegments: [],
-  modelSegments: [],
-  modelSummary: null,
   selectedTaskId: null,
   selectedSegmentId: null,
-  modelFilters: {
-    episode: "all",
-    model: "all",
-  },
   evalInfoCollapsed: false,
   filters: {
     search: "",
@@ -185,8 +179,6 @@ async function init() {
     els.exportFilteredBtn,
     els.exportTypeSelect,
     els.toggleEvalInfoBtn,
-    els.modelEpisodeSelect,
-    els.modelNameSelect,
   ] = [
     $("searchInput"),
     $("issueTypeSelect"),
@@ -208,11 +200,9 @@ async function init() {
     $("exportFilteredBtn"),
     $("exportTypeSelect"),
     $("toggleEvalInfoBtn"),
-    $("modelEpisodeSelect"),
-    $("modelNameSelect"),
   ];
 
-  const [summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments, modelSegments, modelSummary] = await Promise.all([
+  const [summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments] = await Promise.all([
     loadJson("./data/summary.json"),
     loadJson("./data/tasks.json"),
     loadJson("./data/segments_original.json"),
@@ -220,11 +210,9 @@ async function init() {
     loadJson("./data/issues.json"),
     loadJson("./data/overlaps.json"),
     loadJson("./data/covering_segments.json"),
-    loadJson("./data/model_eval_segments.json"),
-    loadJson("./data/model_eval_summary.json"),
   ]);
 
-  Object.assign(state, { summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments, modelSegments, modelSummary });
+  Object.assign(state, { summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments });
   state.selectedTaskId = [...tasks].sort((a, b) => b.risk_score - a.risk_score)[0]?.task_id || null;
 
   hydrateFilters();
@@ -243,20 +231,6 @@ function hydrateFilters() {
   els.trainerSelect.insertAdjacentHTML(
     "beforeend",
     trainers.map((trainer) => `<option value="${escapeHtml(trainer)}">${escapeHtml(trainer)}</option>`).join("")
-  );
-
-  const modelEpisodes = [...new Map(
-    state.modelSegments.map((row) => [row.episode_id, `${row.episode_id} · ${row.task_name}`])
-  ).entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  els.modelEpisodeSelect.insertAdjacentHTML(
-    "beforeend",
-    modelEpisodes.map(([id, label]) => `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`).join("")
-  );
-
-  const modelNames = [...new Set(state.modelSegments.map((row) => row.model).filter(Boolean))].sort();
-  els.modelNameSelect.insertAdjacentHTML(
-    "beforeend",
-    modelNames.map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join("")
   );
 }
 
@@ -327,14 +301,6 @@ function bindEvents() {
   els.toggleEvalInfoBtn.addEventListener("click", () => {
     state.evalInfoCollapsed = !state.evalInfoCollapsed;
     renderEvalInfo();
-  });
-  els.modelEpisodeSelect.addEventListener("change", () => {
-    state.modelFilters.episode = els.modelEpisodeSelect.value;
-    renderModelDataset();
-  });
-  els.modelNameSelect.addEventListener("change", () => {
-    state.modelFilters.model = els.modelNameSelect.value;
-    renderModelDataset();
   });
 }
 
@@ -475,87 +441,9 @@ function renderAll() {
     state.selectedTaskId = tasks[0]?.task_id || state.tasks[0]?.task_id || null;
   }
   renderStats(tasks);
-  renderModelDataset();
   renderEvalInfo();
   renderTaskList(tasks);
   renderSelectedTask();
-}
-
-function filteredModelSegments() {
-  return state.modelSegments.filter((row) => {
-    if (state.modelFilters.episode !== "all" && row.episode_id !== state.modelFilters.episode) return false;
-    if (state.modelFilters.model !== "all" && row.model !== state.modelFilters.model) return false;
-    return true;
-  });
-}
-
-function renderModelDataset() {
-  const rows = filteredModelSegments();
-  const segmentRows = rows.filter((row) => row.caption);
-  const runKeys = new Set(rows.map((row) => `${row.episode_id}::${row.model}`));
-  const episodeKeys = new Set(rows.map((row) => row.episode_id));
-  const modelKeys = new Set(rows.map((row) => row.model));
-  const costs = rows
-    .map((row) => Number(row.model_cost))
-    .filter((cost) => Number.isFinite(cost));
-  const uniqueCostByRun = new Map();
-  for (const row of rows) {
-    const cost = Number(row.model_cost);
-    if (Number.isFinite(cost)) uniqueCostByRun.set(`${row.episode_id}::${row.model}`, cost);
-  }
-  const totalCost = [...uniqueCostByRun.values()].reduce((sum, cost) => sum + cost, 0);
-
-  $("modelSummaryGrid").innerHTML = [
-    statCard("Episodes", episodeKeys.size),
-    statCard("Model runs", runKeys.size),
-    statCard("Segments", segmentRows.length),
-    statCard("Total cost", costs.length ? `$${totalCost.toFixed(4)}` : "-"),
-  ].join("");
-
-  const grouped = new Map();
-  for (const row of rows) {
-    const key = `${row.episode_id}::${row.model}`;
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push(row);
-  }
-  const runCards = [...grouped.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([, runRows]) => renderModelRunCard(runRows))
-    .join("");
-  $("modelRunsList").innerHTML = runCards || `<div class="empty-state">No model outputs match the selected filters.</div>`;
-}
-
-function renderModelRunCard(runRows) {
-  const first = runRows[0];
-  const segments = runRows.filter((row) => row.caption);
-  const cost = Number(first.model_cost);
-  const phaseText = `${first.parsed_phase_count}/${first.model_phase_count} phases`;
-  const captionRows = segments.slice(0, 3).map((row) => `
-    <li><strong>${escapeHtml(row.start)}-${escapeHtml(row.end)}</strong> ${escapeHtml(row.caption)}</li>
-  `).join("");
-  const more = segments.length > 3 ? `<li class="muted">+ ${segments.length - 3} more segments in CSV/JSON</li>` : "";
-  return `
-    <article class="model-run-card">
-      <div class="model-run-header">
-        <div>
-          <h4>${escapeHtml(first.episode_id)} · ${escapeHtml(first.task_name)}</h4>
-          <p>${escapeHtml(first.model)} · ${phaseText} · ${Number.isFinite(cost) ? `$${cost.toFixed(4)}` : "no cost"}</p>
-        </div>
-        <span>${escapeHtml(String(first.duration_secs))}s</span>
-      </div>
-      <ul>${captionRows || `<li class="muted">No phases generated by this model.</li>`}${more}</ul>
-    </article>
-  `;
-}
-
-function statCard(label, value, sub = "") {
-  return `
-    <div class="stat">
-      <div class="stat-value">${escapeHtml(String(value))}</div>
-      <div class="stat-label">${escapeHtml(label)}</div>
-      ${sub ? `<div class="stat-label">${escapeHtml(sub)}</div>` : ""}
-    </div>
-  `;
 }
 
 function renderEvalInfo() {
