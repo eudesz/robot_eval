@@ -156,6 +156,11 @@ select:focus {
   margin-top: 16px;
 }
 
+.sidebar-export-btn {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
 .section-header,
 .panel-header {
   display: flex;

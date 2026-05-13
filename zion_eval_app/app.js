@@ -203,6 +203,7 @@ async function init() {
     els.loadNewTasksBtn,
     els.downloadNewOnlyCsvBtn,
     els.downloadDuplicateCsvBtn,
+    els.downloadSidebarFilteredBtn,
   ] = [
     $("searchInput"),
     $("issueTypeSelect"),
@@ -230,6 +231,7 @@ async function init() {
     $("loadNewTasksBtn"),
     $("downloadNewOnlyCsvBtn"),
     $("downloadDuplicateCsvBtn"),
+    $("downloadSidebarFilteredBtn"),
   ];
 
   const [summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments] = await Promise.all([
@@ -340,6 +342,7 @@ function bindEvents() {
   els.loadNewTasksBtn.addEventListener("click", loadNewTasksIntoDashboard);
   els.downloadNewOnlyCsvBtn.addEventListener("click", () => downloadCsvRows("zion_new_tasks_only.csv", state.csvLoader.newOnlyRows));
   els.downloadDuplicateCsvBtn.addEventListener("click", () => downloadCsvRows("zion_duplicate_tasks.csv", state.csvLoader.duplicateRows));
+  els.downloadSidebarFilteredBtn.addEventListener("click", downloadSidebarFilteredTasks);
 }
 
 function resetFilters() {
@@ -541,6 +544,7 @@ function renderStats(tasks) {
 
 function renderTaskList(tasks) {
   $("taskCount").textContent = fmt(tasks.length);
+  els.downloadSidebarFilteredBtn.disabled = !tasks.length;
   $("taskList").innerHTML = tasks
     .slice(0, 250)
     .map((task) => {
@@ -570,6 +574,36 @@ function renderTaskList(tasks) {
       renderAll();
     });
   });
+}
+
+function downloadSidebarFilteredTasks() {
+  const tasks = filteredTasks();
+  const header = [
+    "task_id",
+    "client_folder_name",
+    "task_name",
+    "status",
+    "trainer_user_id",
+    "date_created",
+    "date_updated",
+    "final_duration_secs",
+    "original_segment_count",
+    "final_segment_count",
+    "risk_score",
+    "issue_count",
+    "critical_count",
+    "high_count",
+    "medium_count",
+    "low_count",
+    "overlap_count",
+    "group_cover_count",
+    "eval_names",
+  ];
+  const rows = tasks.map((task) => ({
+    ...task,
+    eval_names: (task.eval_names || []).join(";"),
+  }));
+  downloadFile("zion_sidebar_filtered_tasks.csv", toCsv(rows, header), "text/csv;charset=utf-8");
 }
 
 function selectedTask() {
