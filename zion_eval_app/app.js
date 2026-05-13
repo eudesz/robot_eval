@@ -175,6 +175,30 @@ function issueTagName(evalName) {
     .replace(/_/g, " ");
 }
 
+const LANGUAGE_POLICY_PATTERNS = [
+  /\bwalks?\b/gi,
+  /\bwalking\b/gi,
+  /\bturns?\b/gi,
+  /\btorso\b/gi,
+  /\bhead\b/gi,
+  /\blegs?\b/gi,
+  /\bfeet\b/gi,
+  /\bfoot\b/gi,
+  /\bbody\b/gi,
+  /\btries?\s+to\b/gi,
+  /\bseems?\s+to\b/gi,
+  /\bappears?\s+to\b/gi,
+];
+
+function highlightLanguagePolicyTerms(text, shouldHighlight) {
+  let html = escapeHtml(text || "");
+  if (!shouldHighlight) return html;
+  for (const pattern of LANGUAGE_POLICY_PATTERNS) {
+    html = html.replace(pattern, (match) => `<mark class="policy-term">${match}</mark>`);
+  }
+  return html;
+}
+
 async function loadJson(path) {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`Failed to load ${path}`);
@@ -757,6 +781,7 @@ function renderSelectedSegmentDetail() {
     return;
   }
   const taskIssues = issuesForTask(segment.task_id).filter((issue) => issue.segment_id === segment.segment_id);
+  const hasLanguagePolicyIssue = taskIssues.some((issue) => issue.eval_name === "zion_language_policy_eval");
   $("selectedSegmentBadge").textContent = segment.source;
   $("selectedSegmentBadge").className = `badge ${segment.source === "final" ? "high" : "low"}`;
   $("selectedSegmentDetail").innerHTML = `
@@ -765,12 +790,12 @@ function renderSelectedSegmentDetail() {
     <div class="kv"><span>Time</span><strong>${fmtTime(segment.start_sec)} - ${fmtTime(segment.end_sec)} (${fmt(segment.duration_sec, 3)}s)</strong></div>
     <div class="caption-reader">
       <div class="caption-label">Caption</div>
-      <p>${escapeHtml(segment.caption || "No caption")}</p>
+      <p>${highlightLanguagePolicyTerms(segment.caption || "No caption", hasLanguagePolicyIssue)}</p>
     </div>
     ${segment.visual_evidence ? `
       <div class="caption-reader">
         <div class="caption-label">Visual Evidence</div>
-        <p>${escapeHtml(segment.visual_evidence)}</p>
+        <p>${highlightLanguagePolicyTerms(segment.visual_evidence, hasLanguagePolicyIssue)}</p>
       </div>` : ""}
     <div class="caption-reader">
       <div class="caption-label">Covered Markers</div>
@@ -905,6 +930,7 @@ function renderIssues() {
 }
 
 function renderIssueCard(issue) {
+  const isLanguagePolicyIssue = issue.eval_name === "zion_language_policy_eval";
   return `
     <article class="issue-card" ${issue.segment_id ? `data-jump-segment="${escapeHtml(issue.segment_id)}"` : ""}>
       <div class="issue-title">
@@ -912,7 +938,7 @@ function renderIssueCard(issue) {
         <span class="badge ${severityClass(issue.severity)}">${escapeHtml(issue.severity)}</span>
       </div>
       <div class="issue-message">${escapeHtml(issue.message)}</div>
-      ${issue.evidence ? `<div class="issue-evidence">${escapeHtml(issue.evidence)}</div>` : ""}
+      ${issue.evidence ? `<div class="issue-evidence">${highlightLanguagePolicyTerms(issue.evidence, isLanguagePolicyIssue)}</div>` : ""}
       <div class="issue-evidence">${fmtTime(issue.start_sec)} ${issue.end_sec ? `- ${fmtTime(issue.end_sec)}` : ""}</div>
     </article>`;
 }

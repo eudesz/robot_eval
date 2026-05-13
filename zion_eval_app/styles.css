@@ -836,6 +836,15 @@ button:hover {
   white-space: pre-wrap;
 }
 
+.policy-term {
+  color: #ffffff;
+  background: rgba(255, 107, 107, 0.85);
+  border: 1px solid var(--critical);
+  border-radius: 4px;
+  padding: 0 3px;
+  font-weight: 900;
+}
+
 .child-caption-list {
   display: grid;
   gap: 8px;
