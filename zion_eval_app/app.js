@@ -199,6 +199,18 @@ function highlightLanguagePolicyTerms(text, shouldHighlight) {
   return html;
 }
 
+function timestampValidityDetail(issue) {
+  const type = issue.timestamp_error_type || "";
+  const map = {
+    outside_duration: "End timestamp is after the video duration.",
+    unparseable: "Start or end timestamp cannot be parsed.",
+    invalid_order: "Start timestamp is greater than or equal to end timestamp.",
+    negative_time: "Start or end timestamp is negative.",
+    missing_timestamp: "Start or end timestamp is missing.",
+  };
+  return map[type] || issue.message || "Timestamp range is invalid.";
+}
+
 async function loadJson(path) {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`Failed to load ${path}`);
@@ -803,6 +815,14 @@ function renderSelectedSegmentDetail() {
     </div>
     ${taskIssues.length ? `
       <div class="object-list">${taskIssues.map((issue) => `<span class="badge ${severityClass(issue.severity)}">${escapeHtml(issue.eval_name)}</span>`).join("")}</div>
+      ${taskIssues.some((issue) => issue.eval_name === "timestamp_validity_eval") ? `
+        <div class="caption-reader">
+          <div class="caption-label">Timestamp Validity Problem</div>
+          ${taskIssues.filter((issue) => issue.eval_name === "timestamp_validity_eval").map((issue) => `
+            <p>${escapeHtml(timestampValidityDetail(issue))} ${issue.evidence ? `Evidence: ${escapeHtml(issue.evidence)}` : ""}</p>
+          `).join("")}
+        </div>
+      ` : ""}
     ` : ""}
   `;
 }
@@ -931,6 +951,7 @@ function renderIssues() {
 
 function renderIssueCard(issue) {
   const isLanguagePolicyIssue = issue.eval_name === "zion_language_policy_eval";
+  const timestampDetail = issue.eval_name === "timestamp_validity_eval" ? timestampValidityDetail(issue) : "";
   return `
     <article class="issue-card" ${issue.segment_id ? `data-jump-segment="${escapeHtml(issue.segment_id)}"` : ""}>
       <div class="issue-title">
@@ -938,6 +959,7 @@ function renderIssueCard(issue) {
         <span class="badge ${severityClass(issue.severity)}">${escapeHtml(issue.severity)}</span>
       </div>
       <div class="issue-message">${escapeHtml(issue.message)}</div>
+      ${timestampDetail ? `<div class="issue-evidence"><strong>Problem:</strong> ${escapeHtml(timestampDetail)}</div>` : ""}
       ${issue.evidence ? `<div class="issue-evidence">${highlightLanguagePolicyTerms(issue.evidence, isLanguagePolicyIssue)}</div>` : ""}
       <div class="issue-evidence">${fmtTime(issue.start_sec)} ${issue.end_sec ? `- ${fmtTime(issue.end_sec)}` : ""}</div>
     </article>`;
@@ -1322,6 +1344,48 @@ function buildGapIssues(task, finalSegments, minGapSeconds = 3) {
   return issues;
 }
 
+function timestampValidityIssueForSegment(task, segment) {
+  const duration = Number(task.final_duration_secs || task.actual_video_duration || 0);
+  let type = "";
+  let message = "";
+  let suggested = "Fix timestamp so start/end are valid and fit the video.";
+  if (!segment.start && !segment.end) {
+    type = "missing_timestamp";
+    message = "Start and end timestamps are missing";
+  } else if (!segment.start || !segment.end) {
+    type = "missing_timestamp";
+    message = "Start or end timestamp is missing";
+  } else if (segment.start_sec === null || segment.end_sec === null) {
+    type = "unparseable";
+    message = "Timestamp is not parseable";
+  } else if (segment.start_sec < 0 || segment.end_sec < 0) {
+    type = "negative_time";
+    message = "Timestamp is negative";
+  } else if (segment.start_sec >= segment.end_sec) {
+    type = "invalid_order";
+    message = "Segment start is not before end";
+  } else if (duration && segment.end_sec > duration) {
+    type = "outside_duration";
+    message = "Segment is outside video duration";
+    suggested = "Clamp/correct segment to fit video duration.";
+  }
+  if (!type) return null;
+  return {
+    issue_id: `UPLOAD-${task.task_id}-timestamp-validity-${segment.array_index}`,
+    task_id: task.task_id,
+    segment_id: segment.segment_id,
+    source: "final",
+    eval_name: "timestamp_validity_eval",
+    severity: "critical",
+    message,
+    evidence: `duration=${duration || ""} start=${segment.start || ""} end=${segment.end || ""}`,
+    start_sec: segment.start_sec,
+    end_sec: segment.end_sec,
+    suggested_action: suggested,
+    timestamp_error_type: type,
+  };
+}
+
 function buildDashboardDataFromRows(rows) {
   const tasks = [];
   const originalSegments = [];
@@ -1366,7 +1430,8 @@ function buildDashboardDataFromRows(rows) {
     const overlapData = buildOverlapData(task, taskFinalSegments);
     const gapIssues = buildGapIssues(task, taskFinalSegments);
     const handIssues = taskFinalSegments.map(strictMissingHandIssueForSegment).filter(Boolean);
-    const taskIssues = [...overlapData.issues, ...gapIssues, ...handIssues];
+    const timestampIssues = taskFinalSegments.map((segment) => timestampValidityIssueForSegment(task, segment)).filter(Boolean);
+    const taskIssues = [...overlapData.issues, ...gapIssues, ...handIssues, ...timestampIssues];
     const counts = issueSeverityCounts(taskIssues);
     Object.assign(task, counts);
     task.issue_count = taskIssues.length;
