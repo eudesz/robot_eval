@@ -21,11 +21,13 @@
             <input id="searchInput" type="search" placeholder="task, id, trainer..." />
           </label>
 
-          <label>
+          <label class="issue-type-filter">
             Issue Types
-            <select id="issueTypeSelect" multiple size="5">
-            </select>
-            <span class="field-help">Hold Cmd/Ctrl to select multiple. Empty means all.</span>
+            <button id="issueTypeToggleBtn" class="multi-select-toggle" type="button">
+              <span id="issueTypeSummary">All issue types</span>
+              <span>▾</span>
+            </button>
+            <div id="issueTypeMenu" class="multi-select-menu" hidden></div>
           </label>
 
           <label>

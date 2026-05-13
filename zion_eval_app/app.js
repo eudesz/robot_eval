@@ -178,7 +178,9 @@ async function loadJson(path) {
 async function init() {
   [
     els.searchInput,
-    els.issueTypeSelect,
+    els.issueTypeToggleBtn,
+    els.issueTypeSummary,
+    els.issueTypeMenu,
     els.severitySelect,
     els.trainerSelect,
     els.sortSelect,
@@ -205,7 +207,9 @@ async function init() {
     els.downloadDuplicateCsvBtn,
   ] = [
     $("searchInput"),
-    $("issueTypeSelect"),
+    $("issueTypeToggleBtn"),
+    $("issueTypeSummary"),
+    $("issueTypeMenu"),
     $("severitySelect"),
     $("trainerSelect"),
     $("sortSelect"),
@@ -257,10 +261,16 @@ function hydrateFilters() {
 function hydrateDynamicFilters() {
   const issueTypes = [...new Set(state.issues.map((issue) => issue.eval_name))].sort();
   const currentIssueTypes = new Set(state.filters.issueTypes || []);
-  els.issueTypeSelect.innerHTML = issueTypes.map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`).join("");
-  [...els.issueTypeSelect.options].forEach((option) => {
-    option.selected = currentIssueTypes.has(option.value);
-  });
+  els.issueTypeMenu.innerHTML = [
+    `<button class="multi-select-action" type="button" data-issue-action="clear">Clear selection</button>`,
+    ...issueTypes.map((type) => `
+      <label class="multi-select-option">
+        <input type="checkbox" value="${escapeHtml(type)}" ${currentIssueTypes.has(type) ? "checked" : ""} />
+        <span>${escapeHtml(type)}</span>
+      </label>
+    `),
+  ].join("");
+  renderIssueTypeSummary();
 
   const trainers = [...new Set(state.tasks.map((task) => task.trainer_user_id).filter(Boolean))].sort();
   const currentTrainer = els.trainerSelect.value || "all";
@@ -268,14 +278,44 @@ function hydrateDynamicFilters() {
   els.trainerSelect.value = trainers.includes(currentTrainer) ? currentTrainer : "all";
 }
 
+function renderIssueTypeSummary() {
+  const count = state.filters.issueTypes.length;
+  if (!count) {
+    els.issueTypeSummary.textContent = "All issue types";
+  } else if (count === 1) {
+    els.issueTypeSummary.textContent = state.filters.issueTypes[0];
+  } else {
+    els.issueTypeSummary.textContent = `${count} issue types selected`;
+  }
+}
+
 function bindEvents() {
   els.searchInput.addEventListener("input", () => {
     state.filters.search = els.searchInput.value.trim().toLowerCase();
     renderAll();
   });
-  els.issueTypeSelect.addEventListener("change", () => {
-    state.filters.issueTypes = [...els.issueTypeSelect.selectedOptions].map((option) => option.value);
+  els.issueTypeToggleBtn.addEventListener("click", () => {
+    els.issueTypeMenu.hidden = !els.issueTypeMenu.hidden;
+  });
+  els.issueTypeMenu.addEventListener("change", () => {
+    state.filters.issueTypes = [...els.issueTypeMenu.querySelectorAll("input:checked")].map((input) => input.value);
+    renderIssueTypeSummary();
     renderAll();
+  });
+  els.issueTypeMenu.addEventListener("click", (event) => {
+    if (event.target.dataset.issueAction === "clear") {
+      state.filters.issueTypes = [];
+      els.issueTypeMenu.querySelectorAll("input").forEach((input) => {
+        input.checked = false;
+      });
+      renderIssueTypeSummary();
+      renderAll();
+    }
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".issue-type-filter")) {
+      els.issueTypeMenu.hidden = true;
+    }
   });
   els.severitySelect.addEventListener("change", () => {
     state.filters.severity = els.severitySelect.value;
@@ -364,9 +404,10 @@ function resetFilters() {
     zoom: 1,
   });
   els.searchInput.value = "";
-  [...els.issueTypeSelect.options].forEach((option) => {
-    option.selected = false;
+  els.issueTypeMenu.querySelectorAll("input").forEach((input) => {
+    input.checked = false;
   });
+  renderIssueTypeSummary();
   els.severitySelect.value = "all";
   els.trainerSelect.value = "all";
   els.sortSelect.value = "risk";
