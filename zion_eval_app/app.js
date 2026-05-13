@@ -1712,11 +1712,30 @@ function strictMissingHandIssueForSegment(segment) {
   if (segment.source !== "final") return null;
   if (String(segment.caption || "").trim().toLowerCase() === "no caption") return null;
   const text = ` ${segment.caption || ""} ${segment.visual_evidence || ""} `.toLowerCase();
-  const hasBoth = /\bboth\s+hands?\b|\btwo\s+hands?\b/.test(text);
+  const hasExplicitBothHands = /\bboth\s+hands?\b|\btwo\s+hands?\b/.test(text);
   const hasLeft = /\bleft\s+hand\b/.test(text);
   const hasRight = /\bright\s+hand\b/.test(text);
+  const hasSimpleBoth = /\bboth\b/.test(text);
   const hasGenericHands = /\bhands?\b/.test(text);
-  if (hasBoth || (hasLeft && hasRight)) return null;
+  if (hasExplicitBothHands || (hasLeft && hasRight)) return null;
+  
+  // Check for "both" without explicit left/right hands - flag as low severity warning
+  if (hasSimpleBoth && !hasExplicitBothHands && !hasLeft && !hasRight) {
+    return {
+      issue_id: `STRICT-HAND-${segment.segment_id}`,
+      task_id: segment.task_id,
+      segment_id: segment.segment_id,
+      source: "final",
+      eval_name: "missing_hand_annotations_eval",
+      severity: "low",
+      message: "Caption mentions 'both' without specifying left/right hands",
+      evidence: "Found 'both' but no explicit left hand, right hand, or both hands reference.",
+      start_sec: segment.start_sec,
+      end_sec: segment.end_sec,
+      suggested_action: "Consider clarifying 'both' as 'both hands' or specify left/right hand roles.",
+    };
+  }
+  
   let message = "";
   let evidence = "";
   if (!hasGenericHands && !hasLeft && !hasRight) {
