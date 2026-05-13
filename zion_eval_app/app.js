@@ -1187,7 +1187,7 @@ function renderSelectedTask() {
     return;
   }
   $("selectedTitle").textContent = task.task_name || "Untitled task";
-  $("selectedSubtitle").textContent = `${task.task_id} · ${fmt(task.final_duration_secs || task.actual_video_duration, 1)}s video · ${task.final_segment_count} final segments · ${task.issue_count} issues`;
+  $("selectedSubtitle").textContent = `${task.task_id} · ${fmtTime(0)} - ${fmtTime(task.final_duration_secs || task.actual_video_duration)} video · ${task.final_segment_count} final segments · ${task.issue_count} issues`;
   $("riskBadge").className = `badge ${task.critical_count ? "critical" : task.high_count ? "high" : "medium"}`;
   $("riskBadge").textContent = `Risk ${task.risk_score}`;
   renderTaskDetail(task);
