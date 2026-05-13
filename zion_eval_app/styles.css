@@ -546,7 +546,7 @@ button:hover {
 
 .track {
   position: relative;
-  height: 52px;
+  height: 66px;
   background: #090d14;
   border: 1px solid var(--line-soft);
   border-radius: 12px;
@@ -556,7 +556,7 @@ button:hover {
 .segment {
   position: absolute;
   top: 8px;
-  height: 36px;
+  height: 50px;
   min-width: 3px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 7px;
@@ -568,6 +568,50 @@ button:hover {
   cursor: pointer;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.segment-caption {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.segment-tags {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.segment-tag {
+  flex: 0 0 auto;
+  max-width: 120px;
+  overflow: hidden;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.segment-tag.critical {
+  background: rgba(255, 107, 107, 0.42);
+}
+
+.segment-tag.high {
+  background: rgba(255, 173, 79, 0.42);
+}
+
+.segment-tag.medium {
+  background: rgba(240, 217, 107, 0.32);
+}
+
+.segment-tag.low {
+  background: rgba(117, 199, 255, 0.32);
 }
 
 .segment.original {

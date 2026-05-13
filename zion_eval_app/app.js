@@ -99,9 +99,9 @@ const EVAL_INFO = [
   {
     name: "missing_hand_annotations_eval",
     severity: "medium",
-    checks: "Possible cases where one hand is labeled but the caption suggests coordinated two-hand interaction.",
+    checks: "Final captions that do not mention any hand, or mention only left hand or only right hand.",
     why: "Zion captions should accurately describe left, right, or both-hand participation.",
-    limitation: "Without video this is only a possible issue, because both hands may not actually be visible.",
+    limitation: "This is text-only and strict; some true one-hand actions may still be valid after video review.",
   },
   {
     name: "segment_granularity_eval",
@@ -167,6 +167,12 @@ function severityClass(severity) {
 
 function severityRank(severity) {
   return { critical: 4, high: 3, medium: 2, low: 1 }[severity] || 0;
+}
+
+function issueTagName(evalName) {
+  return String(evalName || "")
+    .replace(/_eval$/, "")
+    .replace(/_/g, " ");
 }
 
 async function loadJson(path) {
@@ -247,6 +253,7 @@ async function init() {
   ]);
 
   Object.assign(state, { summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments });
+  applyStrictMissingHandEval();
   state.selectedTaskId = [...tasks].sort((a, b) => b.risk_score - a.risk_score)[0]?.task_id || null;
 
   hydrateFilters();
@@ -845,6 +852,8 @@ function renderSegment(segment, duration, segmentIssues) {
   const width = Math.max(0.4, ((segment.end_sec - segment.start_sec) / duration) * 100);
   const issues = segmentIssues.get(segment.segment_id) || [];
   const highest = issues.sort((a, b) => severityRank(b.severity) - severityRank(a.severity))[0]?.severity || "";
+  const tags = issues.slice(0, 2).map((issue) => `<span class="segment-tag ${severityClass(issue.severity)}">${escapeHtml(issueTagName(issue.eval_name))}</span>`).join("");
+  const moreTag = issues.length > 2 ? `<span class="segment-tag">+${issues.length - 2}</span>` : "";
   const classes = [
     "segment",
     segment.source,
@@ -854,7 +863,8 @@ function renderSegment(segment, duration, segmentIssues) {
   const title = `${fmtTime(segment.start_sec)} - ${fmtTime(segment.end_sec)}\\n${segment.caption}`;
   return `
     <div class="${classes}" data-segment-id="${escapeHtml(segment.segment_id)}" title="${escapeHtml(title)}" style="left:${left}%;width:${width}%">
-      ${highest ? `<span class="badge ${highest}">${highest}</span> ` : ""}${escapeHtml(segment.caption)}
+      <div class="segment-caption">${highest ? `<span class="badge ${highest}">${highest}</span> ` : ""}${escapeHtml(segment.caption)}</div>
+      ${issues.length ? `<div class="segment-tags">${tags}${moreTag}</div>` : ""}
     </div>`;
 }
 
@@ -1146,6 +1156,71 @@ function issueSeverityCounts(taskIssues) {
   };
 }
 
+function strictMissingHandIssueForSegment(segment) {
+  if (segment.source !== "final") return null;
+  const text = ` ${segment.caption || ""} ${segment.visual_evidence || ""} `.toLowerCase();
+  const hasBoth = /\bboth\s+hands?\b|\btwo\s+hands?\b/.test(text);
+  const hasLeft = /\bleft\s+hand\b/.test(text);
+  const hasRight = /\bright\s+hand\b/.test(text);
+  const hasGenericHands = /\bhands?\b/.test(text);
+  if (hasBoth || (hasLeft && hasRight)) return null;
+  let message = "";
+  let evidence = "";
+  if (!hasGenericHands && !hasLeft && !hasRight) {
+    message = "Caption does not mention any hand";
+    evidence = "No left/right/both hand reference found.";
+  } else if (hasLeft && !hasRight) {
+    message = "Caption mentions only the left hand";
+    evidence = "Only `left hand` found; right/both hand participation is not described.";
+  } else if (hasRight && !hasLeft) {
+    message = "Caption mentions only the right hand";
+    evidence = "Only `right hand` found; left/both hand participation is not described.";
+  } else {
+    message = "Caption uses generic hand wording without left/right/both";
+    evidence = "Generic hand reference found without explicit left/right/both.";
+  }
+  return {
+    issue_id: `STRICT-HAND-${segment.segment_id}`,
+    task_id: segment.task_id,
+    segment_id: segment.segment_id,
+    source: "final",
+    eval_name: "missing_hand_annotations_eval",
+    severity: "medium",
+    message,
+    evidence,
+    start_sec: segment.start_sec,
+    end_sec: segment.end_sec,
+    suggested_action: "Rewrite caption to explicitly mention left hand, right hand, or both hands.",
+  };
+}
+
+function recalculateTaskIssueCounts(taskIds = null) {
+  const targetIds = taskIds || new Set(state.tasks.map((task) => task.task_id));
+  for (const task of state.tasks) {
+    if (!targetIds.has(task.task_id)) continue;
+    const taskIssues = state.issues.filter((issue) => issue.task_id === task.task_id);
+    const counts = issueSeverityCounts(taskIssues);
+    Object.assign(task, counts);
+    task.issue_count = taskIssues.length;
+    task.eval_names = [...new Set(taskIssues.map((issue) => issue.eval_name))];
+    task.max_severity_rank = Math.max(0, ...taskIssues.map((issue) => severityRank(issue.severity)));
+    task.risk_score = task.critical_count * 100 + task.high_count * 40 + task.medium_count * 10 + task.low_count * 2;
+  }
+}
+
+function applyStrictMissingHandEval(taskIds = null) {
+  const targetIds = taskIds || new Set(state.tasks.map((task) => task.task_id));
+  state.issues = state.issues.filter((issue) => (
+    issue.eval_name !== "missing_hand_annotations_eval" || !targetIds.has(issue.task_id)
+  ));
+  const newIssues = state.finalSegments
+    .filter((segment) => targetIds.has(segment.task_id))
+    .map(strictMissingHandIssueForSegment)
+    .filter(Boolean);
+  state.issues.push(...newIssues);
+  recalculateTaskIssueCounts(targetIds);
+}
+
 function buildOverlapData(task, finalSegments) {
   const issues = [];
   const overlaps = [];
@@ -1264,7 +1339,8 @@ function buildDashboardDataFromRows(rows) {
     const taskFinalSegments = normalizeSegments(task.task_id, "final", finalAnnotation);
     const overlapData = buildOverlapData(task, taskFinalSegments);
     const gapIssues = buildGapIssues(task, taskFinalSegments);
-    const taskIssues = [...overlapData.issues, ...gapIssues];
+    const handIssues = taskFinalSegments.map(strictMissingHandIssueForSegment).filter(Boolean);
+    const taskIssues = [...overlapData.issues, ...gapIssues, ...handIssues];
     const counts = issueSeverityCounts(taskIssues);
     Object.assign(task, counts);
     task.issue_count = taskIssues.length;
