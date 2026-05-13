@@ -489,6 +489,7 @@ function bindEvents() {
   els.segmentIssueTypeMenu.addEventListener("change", () => {
     state.filters.segmentIssueTypes = [...els.segmentIssueTypeMenu.querySelectorAll("input:checked")].map((input) => input.value);
     renderSegmentIssueTypeSummary();
+    els.segmentIssueTypeMenu.hidden = true;
     renderTimeline();
   });
   els.segmentIssueTypeMenu.addEventListener("click", (event) => {
@@ -498,6 +499,7 @@ function bindEvents() {
         input.checked = false;
       });
       renderSegmentIssueTypeSummary();
+      els.segmentIssueTypeMenu.hidden = true;
       renderTimeline();
     }
   });

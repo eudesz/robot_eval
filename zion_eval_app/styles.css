@@ -173,6 +173,10 @@ select:focus {
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
 }
 
+.multi-select-menu[hidden] {
+  display: none;
+}
+
 .multi-select-option {
   display: flex;
   grid-template-columns: none;
