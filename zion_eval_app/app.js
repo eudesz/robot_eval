@@ -484,10 +484,7 @@ function hydrateFilters() {
 }
 
 function hydrateDynamicFilters() {
-  const issueTypes = [...new Set([
-    ...EVAL_INFO.map((info) => info.name),
-    ...state.issues.map((issue) => issue.eval_name),
-  ])].sort();
+  const issueTypes = [...new Set(state.issues.map((issue) => issue.eval_name))].sort();
   const currentIssueTypes = new Set(state.filters.issueTypes || []);
   els.issueTypeMenu.innerHTML = [
     `<button class="multi-select-action" type="button" data-issue-action="select-all">Select all issue types</button>`,
@@ -1190,7 +1187,7 @@ function renderSelectedTask() {
     return;
   }
   $("selectedTitle").textContent = task.task_name || "Untitled task";
-  $("selectedSubtitle").textContent = `${task.task_id} · ${task.final_segment_count} final segments · ${task.issue_count} issues`;
+  $("selectedSubtitle").textContent = `${task.task_id} · ${fmt(task.final_duration_secs || task.actual_video_duration, 1)}s video · ${task.final_segment_count} final segments · ${task.issue_count} issues`;
   $("riskBadge").className = `badge ${task.critical_count ? "critical" : task.high_count ? "high" : "medium"}`;
   $("riskBadge").textContent = `Risk ${task.risk_score}`;
   renderTaskDetail(task);
