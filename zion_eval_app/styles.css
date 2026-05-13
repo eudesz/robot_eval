@@ -157,10 +157,11 @@ select:focus {
 
 .multi-select-menu {
   position: absolute;
-  z-index: 30;
+  z-index: 100;
   top: calc(100% + 6px);
   left: 0;
-  right: 0;
+  width: min(420px, calc(100vw - 48px));
+  min-width: 100%;
   display: grid;
   gap: 6px;
   max-height: 260px;
@@ -175,7 +176,7 @@ select:focus {
 .multi-select-option {
   display: flex;
   grid-template-columns: none;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   color: var(--body);
   background: var(--panel);
@@ -186,12 +187,16 @@ select:focus {
 }
 
 .multi-select-option input {
+  flex: 0 0 auto;
   width: auto;
+  margin-top: 3px;
 }
 
 .multi-select-option span {
   min-width: 0;
+  line-height: 1.25;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .multi-select-action {
@@ -373,18 +378,53 @@ button:hover {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  grid-template-columns: repeat(8, minmax(120px, 1fr));
   gap: 12px;
   margin-bottom: 22px;
 }
 
 .eval-info-panel,
+.review-decision-panel,
 .csv-loader-panel {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: 18px;
   margin-bottom: 22px;
+}
+
+.review-decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.decision-button.approve.active,
+.decision-badge.approved {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success), transparent 45%);
+}
+
+.decision-button.reject.active,
+.decision-badge.rejected {
+  color: var(--critical);
+  border-color: color-mix(in srgb, var(--critical), transparent 45%);
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+  color: var(--text);
+  background: #090d14;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  outline: none;
+}
+
+textarea:focus {
+  border-color: var(--accent);
 }
 
 .csv-loader-grid {
@@ -504,6 +544,7 @@ button:hover {
 
 .timeline-panel {
   grid-column: 1 / 2;
+  overflow: visible;
 }
 
 .selected-segment-panel {
@@ -527,7 +568,7 @@ button:hover {
 }
 
 .segment-issue-filter {
-  width: 260px;
+  width: min(360px, 100%);
 }
 
 .timeline {
@@ -831,6 +872,11 @@ button:hover {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
+}
+
+.object-reference-problem {
+  background: rgba(217, 119, 6, 0.08);
+  border-color: rgba(217, 119, 6, 0.35);
 }
 
 .caption-reader p {

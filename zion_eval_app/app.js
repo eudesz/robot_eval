@@ -8,6 +8,7 @@ const state = {
   coveringSegments: [],
   selectedTaskId: null,
   selectedSegmentId: null,
+  decisions: {},
   csvLoader: {
     newRows: [],
     previousRows: [],
@@ -16,7 +17,7 @@ const state = {
     newFileName: "",
     previousFileName: "",
   },
-  evalInfoCollapsed: false,
+  evalInfoCollapsed: true,
   filters: {
     search: "",
     issueTypes: [],
@@ -39,6 +40,7 @@ const state = {
 };
 
 const els = {};
+const DECISION_STORAGE_KEY = "zion_eval_task_decisions_v1";
 
 const EVAL_INFO = [
   {
@@ -170,6 +172,52 @@ function severityRank(severity) {
   return { critical: 4, high: 3, medium: 2, low: 1 }[severity] || 0;
 }
 
+function loadDecisions() {
+  try {
+    state.decisions = JSON.parse(localStorage.getItem(DECISION_STORAGE_KEY) || "{}");
+  } catch {
+    state.decisions = {};
+  }
+}
+
+function saveDecisions() {
+  localStorage.setItem(DECISION_STORAGE_KEY, JSON.stringify(state.decisions));
+}
+
+function decisionForTask(taskId) {
+  return state.decisions[taskId] || { status: "unreviewed", notes: "", reviewed_at: "" };
+}
+
+function decisionClass(status) {
+  if (status === "approved") return "approved";
+  if (status === "rejected") return "rejected";
+  return "";
+}
+
+function decisionLabel(status) {
+  if (status === "approved") return "Approved";
+  if (status === "rejected") return "Rejected";
+  return "Not reviewed";
+}
+
+function setTaskDecision(status) {
+  if (!state.selectedTaskId) return;
+  state.decisions[state.selectedTaskId] = {
+    status,
+    notes: els.reviewNotesInput.value.trim(),
+    reviewed_at: new Date().toISOString(),
+  };
+  saveDecisions();
+  renderAll();
+}
+
+function clearTaskDecision() {
+  if (!state.selectedTaskId) return;
+  delete state.decisions[state.selectedTaskId];
+  saveDecisions();
+  renderAll();
+}
+
 function issueTagName(evalName) {
   return String(evalName || "")
     .replace(/_eval$/, "")
@@ -212,6 +260,42 @@ function timestampValidityDetail(issue) {
   return map[type] || issue.message || "Timestamp range is invalid.";
 }
 
+function objectReferenceAnalysis(issue, task) {
+  const canonicalNames = (task?.object_inventory || [])
+    .map((object) => object.canonical_name)
+    .filter(Boolean);
+  const evidenceText = String(issue.evidence || issue.message || "").toLowerCase();
+  const exactMatches = canonicalNames.filter((name) => evidenceText.includes(String(name).toLowerCase()));
+  return {
+    problem: issue.message || "Caption does not exactly mention an inventory object.",
+    exactMatches,
+    canonicalNames,
+    suggestion: issue.suggested_action || "Rewrite the caption using the canonical object names from the inventory.",
+  };
+}
+
+function renderObjectReferenceProblem(issue, task) {
+  const analysis = objectReferenceAnalysis(issue, task);
+  const shownNames = analysis.canonicalNames.slice(0, 12);
+  const moreCount = Math.max(0, analysis.canonicalNames.length - shownNames.length);
+  return `
+    <div class="caption-reader object-reference-problem">
+      <div class="caption-label">Object Reference Problem</div>
+      <p><strong>Problem:</strong> ${escapeHtml(analysis.problem)}</p>
+      ${analysis.exactMatches.length
+        ? `<p><strong>Exact inventory names found:</strong> ${escapeHtml(analysis.exactMatches.join(", "))}</p>`
+        : `<p><strong>Exact inventory names found:</strong> none in this segment text.</p>`}
+      ${shownNames.length ? `
+        <div class="caption-label">Use one of these inventory names</div>
+        <div class="object-list">
+          ${shownNames.map((name) => `<span class="badge">${escapeHtml(name)}</span>`).join("")}
+          ${moreCount ? `<span class="badge">+${moreCount} more</span>` : ""}
+        </div>
+      ` : ""}
+      <p><strong>Suggested fix:</strong> ${escapeHtml(analysis.suggestion)}</p>
+    </div>`;
+}
+
 async function loadJson(path) {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`Failed to load ${path}`);
@@ -244,6 +328,11 @@ async function init() {
     els.resetFiltersBtn,
     els.exportFilteredBtn,
     els.exportTypeSelect,
+    els.approveTaskBtn,
+    els.rejectTaskBtn,
+    els.clearTaskDecisionBtn,
+    els.reviewNotesInput,
+    els.reviewDecisionStatus,
     els.toggleEvalInfoBtn,
     els.newCsvInput,
     els.previousCsvInput,
@@ -276,6 +365,11 @@ async function init() {
     $("resetFiltersBtn"),
     $("exportFilteredBtn"),
     $("exportTypeSelect"),
+    $("approveTaskBtn"),
+    $("rejectTaskBtn"),
+    $("clearTaskDecisionBtn"),
+    $("reviewNotesInput"),
+    $("reviewDecisionStatus"),
     $("toggleEvalInfoBtn"),
     $("newCsvInput"),
     $("previousCsvInput"),
@@ -296,6 +390,7 @@ async function init() {
   ]);
 
   Object.assign(state, { summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments });
+  loadDecisions();
   applyStrictMissingHandEval();
   state.selectedTaskId = [...tasks].sort((a, b) => b.risk_score - a.risk_score)[0]?.task_id || null;
 
@@ -469,6 +564,19 @@ function bindEvents() {
   });
   els.resetFiltersBtn.addEventListener("click", resetFilters);
   els.exportFilteredBtn.addEventListener("click", exportFilteredCsv);
+  els.approveTaskBtn.addEventListener("click", () => setTaskDecision("approved"));
+  els.rejectTaskBtn.addEventListener("click", () => setTaskDecision("rejected"));
+  els.clearTaskDecisionBtn.addEventListener("click", clearTaskDecision);
+  els.reviewNotesInput.addEventListener("change", () => {
+    if (!state.selectedTaskId || !state.decisions[state.selectedTaskId]) return;
+    state.decisions[state.selectedTaskId] = {
+      ...state.decisions[state.selectedTaskId],
+      notes: els.reviewNotesInput.value.trim(),
+      reviewed_at: new Date().toISOString(),
+    };
+    saveDecisions();
+    renderTaskDecision();
+  });
   els.toggleEvalInfoBtn.addEventListener("click", () => {
     state.evalInfoCollapsed = !state.evalInfoCollapsed;
     renderEvalInfo();
@@ -626,9 +734,24 @@ function renderAll() {
     state.selectedTaskId = tasks[0]?.task_id || state.tasks[0]?.task_id || null;
   }
   renderStats(tasks);
+  renderTaskDecision();
   renderEvalInfo();
   renderTaskList(tasks);
   renderSelectedTask();
+}
+
+function renderTaskDecision() {
+  const decision = decisionForTask(state.selectedTaskId);
+  els.reviewDecisionStatus.textContent = decisionLabel(decision.status);
+  els.reviewDecisionStatus.className = `badge decision-badge ${decisionClass(decision.status)}`;
+  els.reviewNotesInput.value = decision.notes || "";
+  els.approveTaskBtn.classList.toggle("active", decision.status === "approved");
+  els.rejectTaskBtn.classList.toggle("active", decision.status === "rejected");
+  const disabled = !state.selectedTaskId;
+  els.approveTaskBtn.disabled = disabled;
+  els.rejectTaskBtn.disabled = disabled;
+  els.clearTaskDecisionBtn.disabled = disabled || decision.status === "unreviewed";
+  els.reviewNotesInput.disabled = disabled;
 }
 
 function renderEvalInfo() {
@@ -658,6 +781,8 @@ function renderStats(tasks) {
   const issueIds = new Set();
   const overlapTaskCount = tasks.filter((task) => task.overlap_count > 0).length;
   const groupCoverTaskCount = tasks.filter((task) => task.group_cover_count > 0).length;
+  const approvedTaskCount = tasks.filter((task) => decisionForTask(task.task_id).status === "approved").length;
+  const rejectedTaskCount = tasks.filter((task) => decisionForTask(task.task_id).status === "rejected").length;
   let critical = 0;
   let high = 0;
   for (const task of tasks) {
@@ -674,6 +799,8 @@ function renderStats(tasks) {
     ["Group Covers", fmt(groupCoverTaskCount), "Tasks with macro segments"],
     ["Critical", fmt(critical), "Critical issue rows"],
     ["High", fmt(high), "High issue rows"],
+    ["Approved", fmt(approvedTaskCount), "Reviewed as approved"],
+    ["Rejected", fmt(rejectedTaskCount), "Reviewed as rejected"],
   ]
     .map(
       ([label, value, sub]) => `
@@ -693,6 +820,7 @@ function renderTaskList(tasks) {
     .map((task) => {
       const active = task.task_id === state.selectedTaskId ? "active" : "";
       const maxSeverity = task.critical_count ? "critical" : task.high_count ? "high" : task.medium_count ? "medium" : task.low_count ? "low" : "";
+      const decision = decisionForTask(task.task_id);
       return `
         <article class="task-card ${active}" data-task-id="${escapeHtml(task.task_id)}">
           <div class="task-card-title">
@@ -705,6 +833,7 @@ function renderTaskList(tasks) {
             <span class="badge critical">${fmt(task.critical_count)} critical</span>
             <span class="badge high">${fmt(task.overlap_count)} overlaps</span>
             <span class="badge medium">${fmt(task.group_cover_count)} covers</span>
+            <span class="badge decision-badge ${decisionClass(decision.status)}">${escapeHtml(decisionLabel(decision.status))}</span>
           </div>
         </article>`;
     })
@@ -746,6 +875,189 @@ function exportSidebarFilteredTasks(tasks = filteredTasks()) {
     eval_names: (task.eval_names || []).join(";"),
   }));
   downloadFile("zion_sidebar_filtered_tasks.csv", toCsv(rows, header), "text/csv;charset=utf-8");
+}
+
+function buildReviewExportRows(status, tasks = filteredTasks()) {
+  return tasks
+    .filter((task) => decisionForTask(task.task_id).status === status)
+    .flatMap((task) => {
+      const decision = decisionForTask(task.task_id);
+      const taskIssues = issuesForTask(task.task_id);
+      const base = {
+        task_id: task.task_id,
+        client_folder_name: task.client_folder_name,
+        task_name: task.task_name,
+        trainer_user_id: task.trainer_user_id,
+        review_decision: decision.status,
+        review_notes: decision.notes,
+        reviewed_at: decision.reviewed_at,
+        risk_score: task.risk_score,
+        issue_count: task.issue_count,
+        critical_count: task.critical_count,
+        high_count: task.high_count,
+        medium_count: task.medium_count,
+        low_count: task.low_count,
+        overlap_count: task.overlap_count,
+        group_cover_count: task.group_cover_count,
+      };
+      if (!taskIssues.length) {
+        return [{
+          ...base,
+          issue_id: "",
+          segment_id: "",
+          eval_name: "",
+          severity: "",
+          issue_message: "",
+          evidence: "",
+          start_sec: "",
+          end_sec: "",
+          suggested_action: "",
+        }];
+      }
+      return taskIssues.map((issue) => ({
+        ...base,
+        issue_id: issue.issue_id,
+        segment_id: issue.segment_id,
+        eval_name: issue.eval_name,
+        severity: issue.severity,
+        issue_message: issue.message,
+        evidence: issue.evidence,
+        start_sec: issue.start_sec,
+        end_sec: issue.end_sec,
+        suggested_action: issue.suggested_action,
+      }));
+    });
+}
+
+function buildTasksWithFlagsExportRows(tasks = filteredTasks()) {
+  return tasks.flatMap((task) => {
+    const decision = decisionForTask(task.task_id);
+    const taskIssues = issuesForTask(task.task_id);
+    const base = {
+      task_id: task.task_id,
+      client_folder_name: task.client_folder_name,
+      task_name: task.task_name,
+      status: task.status,
+      trainer_user_id: task.trainer_user_id,
+      reviewer_user_id: task.reviewer_user_id,
+      date_created: task.date_created,
+      date_updated: task.date_updated,
+      final_duration_secs: task.final_duration_secs,
+      original_segment_count: task.original_segment_count,
+      final_segment_count: task.final_segment_count,
+      risk_score: task.risk_score,
+      issue_count: task.issue_count,
+      critical_count: task.critical_count,
+      high_count: task.high_count,
+      medium_count: task.medium_count,
+      low_count: task.low_count,
+      overlap_count: task.overlap_count,
+      group_cover_count: task.group_cover_count,
+      eval_names: (task.eval_names || []).join(";"),
+      review_decision: decision.status,
+      review_notes: decision.notes,
+      reviewed_at: decision.reviewed_at,
+    };
+    if (!taskIssues.length) {
+      return [{
+        ...base,
+        issue_id: "",
+        segment_id: "",
+        source: "",
+        eval_name: "",
+        severity: "",
+        issue_message: "",
+        evidence: "",
+        start_sec: "",
+        end_sec: "",
+        suggested_action: "",
+      }];
+    }
+    return taskIssues.map((issue) => ({
+      ...base,
+      issue_id: issue.issue_id,
+      segment_id: issue.segment_id,
+      source: issue.source,
+      eval_name: issue.eval_name,
+      severity: issue.severity,
+      issue_message: issue.message,
+      evidence: issue.evidence,
+      start_sec: issue.start_sec,
+      end_sec: issue.end_sec,
+      suggested_action: issue.suggested_action,
+    }));
+  });
+}
+
+function exportTasksWithFlags(tasks = filteredTasks()) {
+  const header = [
+    "task_id",
+    "client_folder_name",
+    "task_name",
+    "status",
+    "trainer_user_id",
+    "reviewer_user_id",
+    "date_created",
+    "date_updated",
+    "final_duration_secs",
+    "original_segment_count",
+    "final_segment_count",
+    "risk_score",
+    "issue_count",
+    "critical_count",
+    "high_count",
+    "medium_count",
+    "low_count",
+    "overlap_count",
+    "group_cover_count",
+    "eval_names",
+    "review_decision",
+    "review_notes",
+    "reviewed_at",
+    "issue_id",
+    "segment_id",
+    "source",
+    "eval_name",
+    "severity",
+    "issue_message",
+    "evidence",
+    "start_sec",
+    "end_sec",
+    "suggested_action",
+  ];
+  downloadFile("zion_filtered_tasks_with_flags.csv", toCsv(buildTasksWithFlagsExportRows(tasks), header), "text/csv;charset=utf-8");
+}
+
+function exportReviewedTasks(status, tasks = filteredTasks()) {
+  const rows = buildReviewExportRows(status, tasks);
+  const header = [
+    "task_id",
+    "client_folder_name",
+    "task_name",
+    "trainer_user_id",
+    "review_decision",
+    "review_notes",
+    "reviewed_at",
+    "risk_score",
+    "issue_count",
+    "critical_count",
+    "high_count",
+    "medium_count",
+    "low_count",
+    "overlap_count",
+    "group_cover_count",
+    "issue_id",
+    "segment_id",
+    "eval_name",
+    "severity",
+    "issue_message",
+    "evidence",
+    "start_sec",
+    "end_sec",
+    "suggested_action",
+  ];
+  const filename = status === "approved" ? "zion_approved_tasks.csv" : "zion_rejected_tasks_with_flags.csv";
+  downloadFile(filename, toCsv(rows, header), "text/csv;charset=utf-8");
 }
 
 function selectedTask() {
@@ -856,6 +1168,7 @@ function renderSelectedSegmentDetail() {
     return;
   }
   const taskIssues = issuesForTask(segment.task_id).filter((issue) => issue.segment_id === segment.segment_id);
+  const task = state.tasks.find((item) => item.task_id === segment.task_id);
   const hasLanguagePolicyIssue = taskIssues.some((issue) => issue.eval_name === "zion_language_policy_eval");
   $("selectedSegmentBadge").textContent = segment.source;
   $("selectedSegmentBadge").className = `badge ${segment.source === "final" ? "high" : "low"}`;
@@ -886,6 +1199,10 @@ function renderSelectedSegmentDetail() {
           `).join("")}
         </div>
       ` : ""}
+      ${taskIssues
+        .filter((issue) => issue.eval_name === "object_reference_eval")
+        .map((issue) => renderObjectReferenceProblem(issue, task))
+        .join("")}
     ` : ""}
   `;
 }
@@ -1015,6 +1332,9 @@ function renderIssues() {
 function renderIssueCard(issue) {
   const isLanguagePolicyIssue = issue.eval_name === "zion_language_policy_eval";
   const timestampDetail = issue.eval_name === "timestamp_validity_eval" ? timestampValidityDetail(issue) : "";
+  const task = issue.eval_name === "object_reference_eval"
+    ? state.tasks.find((item) => item.task_id === issue.task_id)
+    : null;
   return `
     <article class="issue-card" ${issue.segment_id ? `data-jump-segment="${escapeHtml(issue.segment_id)}"` : ""}>
       <div class="issue-title">
@@ -1023,6 +1343,7 @@ function renderIssueCard(issue) {
       </div>
       <div class="issue-message">${escapeHtml(issue.message)}</div>
       ${timestampDetail ? `<div class="issue-evidence"><strong>Problem:</strong> ${escapeHtml(timestampDetail)}</div>` : ""}
+      ${issue.eval_name === "object_reference_eval" ? renderObjectReferenceProblem(issue, task) : ""}
       ${issue.evidence ? `<div class="issue-evidence">${highlightLanguagePolicyTerms(issue.evidence, isLanguagePolicyIssue)}</div>` : ""}
       <div class="issue-evidence">${fmtTime(issue.start_sec)} ${issue.end_sec ? `- ${fmtTime(issue.end_sec)}` : ""}</div>
     </article>`;
@@ -1269,6 +1590,7 @@ function issueSeverityCounts(taskIssues) {
 
 function strictMissingHandIssueForSegment(segment) {
   if (segment.source !== "final") return null;
+  if (String(segment.caption || "").trim().toLowerCase() === "no caption") return null;
   const text = ` ${segment.caption || ""} ${segment.visual_evidence || ""} `.toLowerCase();
   const hasBoth = /\bboth\s+hands?\b|\btwo\s+hands?\b/.test(text);
   const hasLeft = /\bleft\s+hand\b/.test(text);
@@ -1544,6 +1866,11 @@ function exportFilteredCsv() {
     return;
   }
 
+  if (exportType === "tasks_with_flags_csv") {
+    exportTasksWithFlags(tasks);
+    return;
+  }
+
   if (exportType === "sidebar_tasks_csv") {
     exportSidebarFilteredTasks(tasks);
     return;
@@ -1577,6 +1904,16 @@ function exportFilteredCsv() {
     return;
   }
 
+  if (exportType === "approved_tasks_csv") {
+    exportReviewedTasks("approved", tasks);
+    return;
+  }
+
+  if (exportType === "rejected_tasks_flags_csv") {
+    exportReviewedTasks("rejected", tasks);
+    return;
+  }
+
   const bundle = {
     exported_at: new Date().toISOString(),
     filters: state.filters,
@@ -1586,6 +1923,7 @@ function exportFilteredCsv() {
     group_covers: state.coveringSegments.filter((cover) => taskIds.has(cover.task_id)),
     original_segments: state.originalSegments.filter((segment) => taskIds.has(segment.task_id)),
     final_segments: state.finalSegments.filter((segment) => taskIds.has(segment.task_id)),
+    decisions: Object.fromEntries(Object.entries(state.decisions).filter(([taskId]) => taskIds.has(taskId))),
   };
   downloadFile("zion_filtered_bundle.json", JSON.stringify(bundle, null, 2), "application/json;charset=utf-8");
 }

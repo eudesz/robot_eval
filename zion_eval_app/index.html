@@ -117,10 +117,13 @@
           <div class="actions">
             <select id="exportTypeSelect" aria-label="Export type">
               <option value="tasks_csv">Filtered Tasks CSV</option>
+              <option value="tasks_with_flags_csv">Filtered Tasks + Flags CSV</option>
               <option value="sidebar_tasks_csv">Sidebar Filtered Tasks CSV</option>
               <option value="issues_csv">Filtered Issues CSV</option>
               <option value="overlaps_csv">Filtered Overlaps CSV</option>
               <option value="group_covers_csv">Filtered Group Covers CSV</option>
+              <option value="approved_tasks_csv">Approved Tasks CSV</option>
+              <option value="rejected_tasks_flags_csv">Rejected Tasks + Flags CSV</option>
               <option value="bundle_json">Filtered Bundle JSON</option>
             </select>
             <button id="exportFilteredBtn" type="button">Download Export</button>
@@ -129,6 +132,25 @@
         </section>
 
         <section id="statsGrid" class="stats-grid"></section>
+
+        <section class="review-decision-panel">
+          <div class="panel-header">
+            <div>
+              <h3>Task Approval</h3>
+              <p>Mark the selected task after reviewing its flags. Decisions are saved locally in this browser and included in exports.</p>
+            </div>
+            <span id="reviewDecisionStatus" class="badge">Not reviewed</span>
+          </div>
+          <div class="review-decision-actions">
+            <button id="approveTaskBtn" type="button" class="decision-button approve">Approve Task</button>
+            <button id="rejectTaskBtn" type="button" class="decision-button reject">Reject Task</button>
+            <button id="clearTaskDecisionBtn" type="button" class="small-button">Clear Decision</button>
+          </div>
+          <label>
+            Review notes / rejection reason
+            <textarea id="reviewNotesInput" rows="3" placeholder="Optional notes for the decision or details to send with rejected tasks."></textarea>
+          </label>
+        </section>
 
         <section class="csv-loader-panel">
           <div class="panel-header">
@@ -250,6 +272,6 @@
       </main>
     </div>
 
-    <script src="./app.js?v=20260513-issue-multiselect"></script>
+    <script src="./app.js?v=20260513-menu-overflow-fix"></script>
   </body>
 </html>
