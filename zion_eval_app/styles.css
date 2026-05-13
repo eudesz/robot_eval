@@ -125,6 +125,22 @@ select:focus {
   border-color: var(--accent);
 }
 
+select[multiple] {
+  min-height: 132px;
+  padding: 6px;
+}
+
+select[multiple] option {
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.field-help {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .toggle-row {
   display: flex;
   gap: 14px;

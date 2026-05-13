@@ -19,7 +19,7 @@ const state = {
   evalInfoCollapsed: false,
   filters: {
     search: "",
-    issueType: "all",
+    issueTypes: [],
     severity: "all",
     trainer: "all",
     sort: "risk",
@@ -256,9 +256,11 @@ function hydrateFilters() {
 
 function hydrateDynamicFilters() {
   const issueTypes = [...new Set(state.issues.map((issue) => issue.eval_name))].sort();
-  const currentIssueType = els.issueTypeSelect.value || "all";
-  els.issueTypeSelect.innerHTML = `<option value="all">All issue types</option>${issueTypes.map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`).join("")}`;
-  els.issueTypeSelect.value = issueTypes.includes(currentIssueType) ? currentIssueType : "all";
+  const currentIssueTypes = new Set(state.filters.issueTypes || []);
+  els.issueTypeSelect.innerHTML = issueTypes.map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`).join("");
+  [...els.issueTypeSelect.options].forEach((option) => {
+    option.selected = currentIssueTypes.has(option.value);
+  });
 
   const trainers = [...new Set(state.tasks.map((task) => task.trainer_user_id).filter(Boolean))].sort();
   const currentTrainer = els.trainerSelect.value || "all";
@@ -272,7 +274,7 @@ function bindEvents() {
     renderAll();
   });
   els.issueTypeSelect.addEventListener("change", () => {
-    state.filters.issueType = els.issueTypeSelect.value;
+    state.filters.issueTypes = [...els.issueTypeSelect.selectedOptions].map((option) => option.value);
     renderAll();
   });
   els.severitySelect.addEventListener("change", () => {
@@ -345,7 +347,7 @@ function bindEvents() {
 function resetFilters() {
   Object.assign(state.filters, {
     search: "",
-    issueType: "all",
+    issueTypes: [],
     severity: "all",
     trainer: "all",
     sort: "risk",
@@ -362,7 +364,9 @@ function resetFilters() {
     zoom: 1,
   });
   els.searchInput.value = "";
-  els.issueTypeSelect.value = "all";
+  [...els.issueTypeSelect.options].forEach((option) => {
+    option.selected = false;
+  });
   els.severitySelect.value = "all";
   els.trainerSelect.value = "all";
   els.sortSelect.value = "risk";
@@ -457,7 +461,7 @@ function filteredTasks() {
     if (state.filters.noFlagsOnly && task.issue_count !== 0) return false;
     if (!isWithinDateRange(task.date_created, state.filters.createdFrom, state.filters.createdTo)) return false;
     if (!isWithinDateRange(task.date_updated, state.filters.updatedFrom, state.filters.updatedTo)) return false;
-    if (state.filters.issueType !== "all" && !taskIssues.some((issue) => issue.eval_name === state.filters.issueType)) return false;
+    if (state.filters.issueTypes.length && !taskIssues.some((issue) => state.filters.issueTypes.includes(issue.eval_name))) return false;
     if (state.filters.severity !== "all" && !taskIssues.some((issue) => issue.severity === state.filters.severity)) return false;
     return true;
   });
