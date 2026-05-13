@@ -51,6 +51,7 @@ select {
   top: 0;
   height: 100vh;
   overflow: auto;
+  min-width: 0;
 }
 
 .brand {
@@ -93,6 +94,8 @@ h1 {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 16px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 label {
@@ -101,11 +104,14 @@ label {
   gap: 6px;
   font-size: 12px;
   font-weight: 700;
+  min-width: 0;
 }
 
 input,
 select {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   color: var(--text);
   background: #090d14;
   border: 1px solid var(--line);
