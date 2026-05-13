@@ -8,6 +8,14 @@ const state = {
   coveringSegments: [],
   selectedTaskId: null,
   selectedSegmentId: null,
+  csvLoader: {
+    newRows: [],
+    previousRows: [],
+    newOnlyRows: [],
+    duplicateRows: [],
+    newFileName: "",
+    previousFileName: "",
+  },
   evalInfoCollapsed: false,
   filters: {
     search: "",
@@ -179,6 +187,11 @@ async function init() {
     els.exportFilteredBtn,
     els.exportTypeSelect,
     els.toggleEvalInfoBtn,
+    els.newCsvInput,
+    els.previousCsvInput,
+    els.dedupeKeySelect,
+    els.downloadNewOnlyCsvBtn,
+    els.downloadDuplicateCsvBtn,
   ] = [
     $("searchInput"),
     $("issueTypeSelect"),
@@ -200,6 +213,11 @@ async function init() {
     $("exportFilteredBtn"),
     $("exportTypeSelect"),
     $("toggleEvalInfoBtn"),
+    $("newCsvInput"),
+    $("previousCsvInput"),
+    $("dedupeKeySelect"),
+    $("downloadNewOnlyCsvBtn"),
+    $("downloadDuplicateCsvBtn"),
   ];
 
   const [summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments] = await Promise.all([
@@ -302,6 +320,11 @@ function bindEvents() {
     state.evalInfoCollapsed = !state.evalInfoCollapsed;
     renderEvalInfo();
   });
+  els.newCsvInput.addEventListener("change", () => loadCsvFile("new", els.newCsvInput.files?.[0]));
+  els.previousCsvInput.addEventListener("change", () => loadCsvFile("previous", els.previousCsvInput.files?.[0]));
+  els.dedupeKeySelect.addEventListener("change", recomputeCsvDiff);
+  els.downloadNewOnlyCsvBtn.addEventListener("click", () => downloadCsvRows("zion_new_tasks_only.csv", state.csvLoader.newOnlyRows));
+  els.downloadDuplicateCsvBtn.addEventListener("click", () => downloadCsvRows("zion_duplicate_tasks.csv", state.csvLoader.duplicateRows));
 }
 
 function resetFilters() {
@@ -889,6 +912,107 @@ function toCsv(rows, header) {
     header.join(","),
     ...rows.map((row) => header.map((field) => csvEscape(row[field])).join(",")),
   ].join("\n");
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (char === '"' && inQuotes && next === '"') {
+      field += '"';
+      i += 1;
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      row.push(field);
+      field = "";
+    } else if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") i += 1;
+      row.push(field);
+      if (row.some((value) => value !== "")) rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += char;
+    }
+  }
+  row.push(field);
+  if (row.some((value) => value !== "")) rows.push(row);
+  if (!rows.length) return [];
+  const header = rows[0].map((value) => value.trim());
+  return rows.slice(1).map((values) => Object.fromEntries(header.map((key, index) => [key, values[index] ?? ""])));
+}
+
+async function loadCsvFile(kind, file) {
+  if (!file) return;
+  const text = await file.text();
+  const rows = parseCsv(text);
+  if (kind === "new") {
+    state.csvLoader.newRows = rows;
+    state.csvLoader.newFileName = file.name;
+  } else {
+    state.csvLoader.previousRows = rows;
+    state.csvLoader.previousFileName = file.name;
+  }
+  recomputeCsvDiff();
+}
+
+function dedupeKeysForRow(row) {
+  const mode = els.dedupeKeySelect.value;
+  const taskId = row.task_id || "";
+  const folder = row.client_folder_name || "";
+  if (mode === "task_id") return taskId ? [taskId] : [];
+  if (mode === "client_folder_name") return folder ? [folder] : [];
+  return [taskId && `task:${taskId}`, folder && `folder:${folder}`].filter(Boolean);
+}
+
+function fallbackPreviousRows() {
+  return state.tasks.map((task) => ({
+    task_id: task.task_id,
+    client_folder_name: task.client_folder_name,
+  }));
+}
+
+function recomputeCsvDiff() {
+  const previousRows = state.csvLoader.previousRows.length ? state.csvLoader.previousRows : fallbackPreviousRows();
+  const previousKeys = new Set(previousRows.flatMap(dedupeKeysForRow));
+  const newOnlyRows = [];
+  const duplicateRows = [];
+  for (const row of state.csvLoader.newRows) {
+    const keys = dedupeKeysForRow(row);
+    const isDuplicate = keys.length > 0 && keys.some((key) => previousKeys.has(key));
+    (isDuplicate ? duplicateRows : newOnlyRows).push(row);
+  }
+  state.csvLoader.newOnlyRows = newOnlyRows;
+  state.csvLoader.duplicateRows = duplicateRows;
+  renderCsvLoaderSummary();
+}
+
+function renderCsvLoaderSummary() {
+  const hasNew = state.csvLoader.newRows.length > 0;
+  const previousSource = state.csvLoader.previousRows.length
+    ? state.csvLoader.previousFileName
+    : "current bundled dataset";
+  $("csvLoaderSummary").innerHTML = hasNew
+    ? `
+      <strong>${fmt(state.csvLoader.newRows.length, 0)}</strong> rows loaded from ${escapeHtml(state.csvLoader.newFileName)}.
+      Compared against ${escapeHtml(previousSource)}.
+      <strong>${fmt(state.csvLoader.newOnlyRows.length, 0)}</strong> new rows,
+      <strong>${fmt(state.csvLoader.duplicateRows.length, 0)}</strong> duplicates excluded.
+    `
+    : "Load a new CSV to calculate which tasks are new versus already present.";
+  els.downloadNewOnlyCsvBtn.disabled = !state.csvLoader.newOnlyRows.length;
+  els.downloadDuplicateCsvBtn.disabled = !state.csvLoader.duplicateRows.length;
+}
+
+function downloadCsvRows(filename, rows) {
+  if (!rows.length) return;
+  const header = Object.keys(rows[0]);
+  downloadFile(filename, toCsv(rows, header), "text/csv;charset=utf-8");
 }
 
 function exportFilteredCsv() {

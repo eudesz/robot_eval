@@ -309,12 +309,41 @@ button:hover {
   margin-bottom: 22px;
 }
 
-.eval-info-panel {
+.eval-info-panel,
+.csv-loader-panel {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: 18px;
   margin-bottom: 22px;
+}
+
+.csv-loader-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.csv-loader-summary {
+  color: var(--body);
+  background: #080c13;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  margin-top: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.csv-loader-summary strong {
+  color: var(--text);
+}
+
+.csv-loader-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .eval-info-grid {
@@ -741,6 +770,10 @@ button:hover {
   }
 
   .eval-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .csv-loader-grid {
     grid-template-columns: 1fr;
   }
 

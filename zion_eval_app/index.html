@@ -127,6 +127,40 @@
 
         <section id="statsGrid" class="stats-grid"></section>
 
+        <section class="csv-loader-panel">
+          <div class="panel-header">
+            <div>
+              <h3>Daily CSV Loader</h3>
+              <p>Upload a new export and optionally a previous export to remove duplicate tasks before evaluation.</p>
+            </div>
+          </div>
+          <div class="csv-loader-grid">
+            <label>
+              New CSV export
+              <input id="newCsvInput" type="file" accept=".csv,text/csv" />
+            </label>
+            <label>
+              Previous CSV export (optional)
+              <input id="previousCsvInput" type="file" accept=".csv,text/csv" />
+            </label>
+            <label>
+              Deduplicate by
+              <select id="dedupeKeySelect">
+                <option value="task_id">task_id</option>
+                <option value="client_folder_name">client_folder_name / video uuid</option>
+                <option value="both">task_id + client_folder_name</option>
+              </select>
+            </label>
+          </div>
+          <div id="csvLoaderSummary" class="csv-loader-summary">
+            Load a new CSV to calculate which tasks are new versus already present.
+          </div>
+          <div class="csv-loader-actions">
+            <button id="downloadNewOnlyCsvBtn" type="button" disabled>Download New Only CSV</button>
+            <button id="downloadDuplicateCsvBtn" type="button" disabled>Download Duplicate CSV</button>
+          </div>
+        </section>
+
         <section class="eval-info-panel">
           <div class="panel-header">
             <div>
