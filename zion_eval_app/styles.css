@@ -448,6 +448,12 @@ textarea:focus {
   line-height: 1.5;
 }
 
+.csv-loader-summary.compact {
+  margin-top: 12px;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
 .csv-loader-summary strong {
   color: var(--text);
 }

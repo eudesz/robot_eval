@@ -161,6 +161,10 @@
           </div>
           <div class="csv-loader-grid">
             <label>
+              Evaluation version
+              <input id="evalVersionInput" type="text" placeholder="Auto-generated from CSV name and date" />
+            </label>
+            <label>
               New CSV export
               <input id="newCsvInput" type="file" accept=".csv,text/csv" />
             </label>
@@ -176,6 +180,9 @@
                 <option value="both">task_id + client_folder_name</option>
               </select>
             </label>
+          </div>
+          <div id="evalVersionMeta" class="csv-loader-summary compact">
+            No evaluation version selected yet.
           </div>
           <div id="csvLoaderSummary" class="csv-loader-summary">
             Load a new CSV to calculate which tasks are new versus already present.
@@ -272,6 +279,6 @@
       </main>
     </div>
 
-    <script src="./app.js?v=20260513-multiselect-hidden-fix"></script>
+    <script src="./app.js?v=20260513-eval-versioning"></script>
   </body>
 </html>

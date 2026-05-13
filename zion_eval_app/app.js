@@ -9,6 +9,11 @@ const state = {
   selectedTaskId: null,
   selectedSegmentId: null,
   decisions: {},
+  currentVersion: {
+    name: "",
+    source_file: "",
+    created_at: "",
+  },
   csvLoader: {
     newRows: [],
     previousRows: [],
@@ -41,6 +46,7 @@ const state = {
 
 const els = {};
 const DECISION_STORAGE_KEY = "zion_eval_task_decisions_v1";
+const VERSION_STORAGE_KEY = "zion_eval_current_version_v1";
 
 const EVAL_INFO = [
   {
@@ -182,6 +188,74 @@ function loadDecisions() {
 
 function saveDecisions() {
   localStorage.setItem(DECISION_STORAGE_KEY, JSON.stringify(state.decisions));
+}
+
+function loadCurrentVersion() {
+  try {
+    state.currentVersion = {
+      ...state.currentVersion,
+      ...JSON.parse(localStorage.getItem(VERSION_STORAGE_KEY) || "{}"),
+    };
+  } catch {
+    state.currentVersion = { name: "", source_file: "", created_at: "" };
+  }
+}
+
+function saveCurrentVersion() {
+  localStorage.setItem(VERSION_STORAGE_KEY, JSON.stringify(state.currentVersion));
+}
+
+function slugifyFilenamePart(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 90) || "unversioned";
+}
+
+function todayStamp() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function versionedFilename(baseFilename) {
+  const parts = baseFilename.split(".");
+  const ext = parts.length > 1 ? parts.pop() : "";
+  const stem = parts.join(".") || baseFilename;
+  const versionSlug = slugifyFilenamePart(state.currentVersion.name || "unversioned");
+  return ext ? `${stem}_${versionSlug}.${ext}` : `${stem}_${versionSlug}`;
+}
+
+function setCurrentVersionFromFile(fileName) {
+  const createdAt = new Date().toISOString();
+  state.currentVersion = {
+    name: `${todayStamp()}_${slugifyFilenamePart(fileName)}`,
+    source_file: fileName,
+    created_at: createdAt,
+  };
+  saveCurrentVersion();
+  renderCurrentVersion();
+}
+
+function updateCurrentVersionName(name) {
+  state.currentVersion = {
+    ...state.currentVersion,
+    name: name.trim(),
+    created_at: state.currentVersion.created_at || new Date().toISOString(),
+  };
+  saveCurrentVersion();
+  renderCurrentVersion();
+}
+
+function renderCurrentVersion() {
+  if (!els.evalVersionInput || !els.evalVersionMeta) return;
+  els.evalVersionInput.value = state.currentVersion.name || "";
+  els.evalVersionMeta.innerHTML = state.currentVersion.name
+    ? `
+      <strong>Current evaluation version:</strong> ${escapeHtml(state.currentVersion.name)}
+      ${state.currentVersion.source_file ? ` · Source CSV: ${escapeHtml(state.currentVersion.source_file)}` : ""}
+    `
+    : "No evaluation version selected yet.";
 }
 
 function decisionForTask(taskId) {
@@ -336,6 +410,8 @@ async function init() {
     els.toggleEvalInfoBtn,
     els.newCsvInput,
     els.previousCsvInput,
+    els.evalVersionInput,
+    els.evalVersionMeta,
     els.dedupeKeySelect,
     els.loadNewTasksBtn,
     els.downloadNewOnlyCsvBtn,
@@ -373,6 +449,8 @@ async function init() {
     $("toggleEvalInfoBtn"),
     $("newCsvInput"),
     $("previousCsvInput"),
+    $("evalVersionInput"),
+    $("evalVersionMeta"),
     $("dedupeKeySelect"),
     $("loadNewTasksBtn"),
     $("downloadNewOnlyCsvBtn"),
@@ -391,11 +469,13 @@ async function init() {
 
   Object.assign(state, { summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments });
   loadDecisions();
+  loadCurrentVersion();
   applyStrictMissingHandEval();
   state.selectedTaskId = [...tasks].sort((a, b) => b.risk_score - a.risk_score)[0]?.task_id || null;
 
   hydrateFilters();
   bindEvents();
+  renderCurrentVersion();
   renderAll();
 }
 
@@ -585,6 +665,7 @@ function bindEvents() {
   });
   els.newCsvInput.addEventListener("change", () => loadCsvFile("new", els.newCsvInput.files?.[0]));
   els.previousCsvInput.addEventListener("change", () => loadCsvFile("previous", els.previousCsvInput.files?.[0]));
+  els.evalVersionInput.addEventListener("change", () => updateCurrentVersionName(els.evalVersionInput.value));
   els.dedupeKeySelect.addEventListener("change", recomputeCsvDiff);
   els.loadNewTasksBtn.addEventListener("click", loadNewTasksIntoDashboard);
   els.downloadNewOnlyCsvBtn.addEventListener("click", () => downloadCsvRows("zion_new_tasks_only.csv", state.csvLoader.newOnlyRows));
@@ -1068,7 +1149,24 @@ function selectedTask() {
 
 function renderSelectedTask() {
   const task = selectedTask();
-  if (!task) return;
+  if (!task) {
+    $("selectedTitle").textContent = "No data loaded";
+    $("selectedSubtitle").textContent = "Upload a new CSV export in the Daily CSV Loader to start evaluating tasks.";
+    $("riskBadge").className = "badge";
+    $("riskBadge").textContent = "No task";
+    $("taskDetail").innerHTML = '<div class="empty">No task selected.</div>';
+    $("timeline").innerHTML = '<div class="empty">Load a CSV to generate timelines.</div>';
+    $("selectedSegmentBadge").textContent = "None";
+    $("selectedSegmentBadge").className = "badge";
+    $("selectedSegmentDetail").innerHTML = '<div class="empty">No segment selected.</div>';
+    $("issueCountForTask").textContent = "0";
+    $("overlapCountForTask").textContent = "0";
+    $("groupCoverCountForTask").textContent = "0";
+    $("issuesList").innerHTML = '<div class="empty">No issues loaded.</div>';
+    $("overlapList").innerHTML = '<div class="empty">No overlaps loaded.</div>';
+    $("groupCoverList").innerHTML = '<div class="empty">No group covers loaded.</div>';
+    return;
+  }
   $("selectedTitle").textContent = task.task_name || "Untitled task";
   $("selectedSubtitle").textContent = `${task.task_id} · ${task.final_segment_count} final segments · ${task.issue_count} issues`;
   $("riskBadge").className = `badge ${task.critical_count ? "critical" : task.high_count ? "high" : "medium"}`;
@@ -1430,7 +1528,7 @@ function downloadFile(filename, content, mimeType) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = filename;
+  link.download = versionedFilename(filename);
   link.style.display = "none";
   document.body.appendChild(link);
   link.click();
@@ -1487,6 +1585,7 @@ async function loadCsvFile(kind, file) {
   if (kind === "new") {
     state.csvLoader.newRows = rows;
     state.csvLoader.newFileName = file.name;
+    setCurrentVersionFromFile(file.name);
   } else {
     state.csvLoader.previousRows = rows;
     state.csvLoader.previousFileName = file.name;
@@ -1850,6 +1949,9 @@ function loadNewTasksIntoDashboard() {
     task_count: state.tasks.length,
     issue_count: state.issues.length,
     uploaded_task_count: data.tasks.length,
+    evaluation_version: state.currentVersion.name,
+    evaluation_source_file: state.currentVersion.source_file,
+    evaluation_loaded_at: new Date().toISOString(),
   };
   state.selectedTaskId = data.tasks[0].task_id;
   hydrateDynamicFilters();
@@ -1918,6 +2020,7 @@ function exportFilteredCsv() {
 
   const bundle = {
     exported_at: new Date().toISOString(),
+    evaluation_version: state.currentVersion,
     filters: state.filters,
     tasks,
     issues: state.issues.filter((issue) => taskIds.has(issue.task_id)),
