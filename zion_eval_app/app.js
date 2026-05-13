@@ -33,6 +33,7 @@ const state = {
     criticalOnly: false,
     noFlagsOnly: false,
     issuesOnlyTimeline: false,
+    segmentIssueTypes: [],
     zoom: 1,
   },
 };
@@ -223,6 +224,9 @@ async function init() {
     els.issueTypeToggleBtn,
     els.issueTypeSummary,
     els.issueTypeMenu,
+    els.segmentIssueTypeToggleBtn,
+    els.segmentIssueTypeSummary,
+    els.segmentIssueTypeMenu,
     els.severitySelect,
     els.trainerSelect,
     els.sortSelect,
@@ -252,6 +256,9 @@ async function init() {
     $("issueTypeToggleBtn"),
     $("issueTypeSummary"),
     $("issueTypeMenu"),
+    $("segmentIssueTypeToggleBtn"),
+    $("segmentIssueTypeSummary"),
+    $("segmentIssueTypeMenu"),
     $("severitySelect"),
     $("trainerSelect"),
     $("sortSelect"),
@@ -314,11 +321,26 @@ function hydrateDynamicFilters() {
     `),
   ].join("");
   renderIssueTypeSummary();
+  hydrateSegmentIssueTypeMenu(issueTypes);
 
   const trainers = [...new Set(state.tasks.map((task) => task.trainer_user_id).filter(Boolean))].sort();
   const currentTrainer = els.trainerSelect.value || "all";
   els.trainerSelect.innerHTML = `<option value="all">All trainers</option>${trainers.map((trainer) => `<option value="${escapeHtml(trainer)}">${escapeHtml(trainer)}</option>`).join("")}`;
   els.trainerSelect.value = trainers.includes(currentTrainer) ? currentTrainer : "all";
+}
+
+function hydrateSegmentIssueTypeMenu(issueTypes) {
+  const currentSegmentIssueTypes = new Set(state.filters.segmentIssueTypes || []);
+  els.segmentIssueTypeMenu.innerHTML = [
+    `<button class="multi-select-action" type="button" data-segment-issue-action="clear">Clear selection</button>`,
+    ...issueTypes.map((type) => `
+      <label class="multi-select-option">
+        <input type="checkbox" value="${escapeHtml(type)}" ${currentSegmentIssueTypes.has(type) ? "checked" : ""} />
+        <span>${escapeHtml(type)}</span>
+      </label>
+    `),
+  ].join("");
+  renderSegmentIssueTypeSummary();
 }
 
 function renderIssueTypeSummary() {
@@ -332,6 +354,17 @@ function renderIssueTypeSummary() {
   }
 }
 
+function renderSegmentIssueTypeSummary() {
+  const count = state.filters.segmentIssueTypes.length;
+  if (!count) {
+    els.segmentIssueTypeSummary.textContent = "All segment issues";
+  } else if (count === 1) {
+    els.segmentIssueTypeSummary.textContent = state.filters.segmentIssueTypes[0];
+  } else {
+    els.segmentIssueTypeSummary.textContent = `${count} segment issue types`;
+  }
+}
+
 function bindEvents() {
   els.searchInput.addEventListener("input", () => {
     state.filters.search = els.searchInput.value.trim().toLowerCase();
@@ -339,6 +372,9 @@ function bindEvents() {
   });
   els.issueTypeToggleBtn.addEventListener("click", () => {
     els.issueTypeMenu.hidden = !els.issueTypeMenu.hidden;
+  });
+  els.segmentIssueTypeToggleBtn.addEventListener("click", () => {
+    els.segmentIssueTypeMenu.hidden = !els.segmentIssueTypeMenu.hidden;
   });
   els.issueTypeMenu.addEventListener("change", () => {
     state.filters.issueTypes = [...els.issueTypeMenu.querySelectorAll("input:checked")].map((input) => input.value);
@@ -355,9 +391,27 @@ function bindEvents() {
       renderAll();
     }
   });
+  els.segmentIssueTypeMenu.addEventListener("change", () => {
+    state.filters.segmentIssueTypes = [...els.segmentIssueTypeMenu.querySelectorAll("input:checked")].map((input) => input.value);
+    renderSegmentIssueTypeSummary();
+    renderTimeline();
+  });
+  els.segmentIssueTypeMenu.addEventListener("click", (event) => {
+    if (event.target.dataset.segmentIssueAction === "clear") {
+      state.filters.segmentIssueTypes = [];
+      els.segmentIssueTypeMenu.querySelectorAll("input").forEach((input) => {
+        input.checked = false;
+      });
+      renderSegmentIssueTypeSummary();
+      renderTimeline();
+    }
+  });
   document.addEventListener("click", (event) => {
-    if (!event.target.closest(".issue-type-filter")) {
+    if (!event.target.closest(".issue-type-filter:not(.segment-issue-filter)")) {
       els.issueTypeMenu.hidden = true;
+    }
+    if (!event.target.closest(".segment-issue-filter")) {
+      els.segmentIssueTypeMenu.hidden = true;
     }
   });
   els.severitySelect.addEventListener("change", () => {
@@ -444,6 +498,7 @@ function resetFilters() {
     criticalOnly: false,
     noFlagsOnly: false,
     issuesOnlyTimeline: false,
+    segmentIssueTypes: [],
     zoom: 1,
   });
   els.searchInput.value = "";
@@ -464,6 +519,10 @@ function resetFilters() {
   els.criticalOnly.checked = false;
   els.noFlagsOnly.checked = false;
   els.issuesOnlyTimeline.checked = false;
+  els.segmentIssueTypeMenu.querySelectorAll("input").forEach((input) => {
+    input.checked = false;
+  });
+  renderSegmentIssueTypeSummary();
   els.zoomRange.value = "1";
   renderAll();
 }
@@ -745,9 +804,13 @@ function renderTimeline() {
   const width = Math.max(780, duration * 12 * state.filters.zoom);
 
   const renderLane = (label, source, segments) => {
-    const visible = state.filters.issuesOnlyTimeline && source === "final"
-      ? segments.filter((segment) => segmentIssues.has(segment.segment_id))
-      : segments;
+    const visible = segments.filter((segment) => {
+      if (source !== "final") return true;
+      const issues = segmentIssues.get(segment.segment_id) || [];
+      if (state.filters.issuesOnlyTimeline && !issues.length) return false;
+      if (state.filters.segmentIssueTypes.length && !issues.some((issue) => state.filters.segmentIssueTypes.includes(issue.eval_name))) return false;
+      return true;
+    });
     return `
       <div class="lane" style="width:${width}px">
         <div class="lane-header"><span>${label}</span><span>${visible.length} segments</span></div>

@@ -519,10 +519,15 @@ button:hover {
   display: flex;
   align-items: center;
   gap: 16px;
+  flex-wrap: wrap;
 }
 
 .timeline-controls label:first-child {
   width: 180px;
+}
+
+.segment-issue-filter {
+  width: 260px;
 }
 
 .timeline {

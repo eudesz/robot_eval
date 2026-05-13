@@ -191,6 +191,14 @@
                   Zoom
                   <input id="zoomRange" type="range" min="1" max="8" step="0.5" value="1" />
                 </label>
+                <label class="issue-type-filter segment-issue-filter">
+                  Segment Issue Types
+                  <button id="segmentIssueTypeToggleBtn" class="multi-select-toggle" type="button">
+                    <span id="segmentIssueTypeSummary">All segment issues</span>
+                    <span>▾</span>
+                  </button>
+                  <div id="segmentIssueTypeMenu" class="multi-select-menu" hidden></div>
+                </label>
                 <label class="checkbox"><input id="issuesOnlyTimeline" type="checkbox" /> Show issue segments</label>
               </div>
             </div>
