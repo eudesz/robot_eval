@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zion Video Segment Review</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="review-shell">
+      <section class="review-header">
+        <div>
+          <div class="eyebrow">Zion Manual QA</div>
+          <h1>Video Segment Review</h1>
+          <p>Review model segments against video and annotate visible errors.</p>
+        </div>
+        <div class="review-actions">
+          <a class="button-link" href="./index.html">Back to dashboard</a>
+          <button id="exportReviewBtn" type="button">Export Review JSON</button>
+          <button id="clearReviewBtn" type="button">Clear Saved Labels</button>
+        </div>
+      </section>
+
+      <section class="review-controls">
+        <label>
+          Video
+          <select id="videoSelect"></select>
+        </label>
+        <div class="compare-note">
+          <strong>Compare:</strong> Gemini 3.1 Pro 2.5 Flash vs Qwen 32B
+        </div>
+        <label>
+          Segment Filter
+          <select id="segmentFilterSelect">
+            <option value="all">All segments</option>
+            <option value="unreviewed">Unreviewed</option>
+            <option value="flagged">Flagged</option>
+            <option value="overlap">Overlap signal</option>
+            <option value="gap">Gap signal</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="review-grid">
+        <div class="video-panel">
+          <video id="reviewVideo" controls preload="metadata"></video>
+          <div class="video-controls">
+            <button id="prevSegmentBtn" type="button">Previous Segment</button>
+            <button id="replaySegmentBtn" type="button">Replay Segment</button>
+            <button id="nextSegmentBtn" type="button">Next Segment</button>
+          </div>
+          <div id="currentComparison" class="current-comparison"></div>
+          <div id="comparisonTimelines" class="comparison-timelines"></div>
+          <div id="segmentList" class="review-segment-list"></div>
+        </div>
+
+        <aside class="annotation-panel">
+          <div class="section-header">
+            <h2>Active Segment</h2>
+            <span id="activeSegmentBadge" class="badge">none</span>
+          </div>
+          <div id="activeSegmentDetail" class="selected-segment-detail">
+            <div class="empty">Play the video or click a segment to start reviewing.</div>
+          </div>
+
+          <div class="annotation-form">
+            <h3>Error Labels</h3>
+            <div id="labelGrid" class="label-grid"></div>
+
+            <label>
+              Severity
+              <select id="severityInput">
+                <option value="">Not set</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+
+            <label>
+              Notes
+              <textarea id="notesInput" rows="5" placeholder="What is wrong in the segment?"></textarea>
+            </label>
+
+            <div class="video-controls">
+              <button id="saveAnnotationBtn" type="button">Save Annotation</button>
+              <button id="markReviewedBtn" type="button">Mark Reviewed</button>
+            </div>
+          </div>
+        </aside>
+      </section>
+    </main>
+    <script src="./video_review.js"></script>
+  </body>
+</html>
