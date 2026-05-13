@@ -10,6 +10,9 @@ const state = {
   modelSummary: null,
   selectedTaskId: null,
   selectedSegmentId: null,
+  selectedModelSegmentId: null,
+  sidebarCollapsed: false,
+  modelRunOrder: [],
   modelFilters: {
     episode: "all",
     model: "all",
@@ -26,6 +29,7 @@ const state = {
     createdTo: "",
     updatedFrom: "",
     updatedTo: "",
+    modelEvalOnly: false,
     overlapOnly: false,
     groupCoverOnly: false,
     criticalOnly: false,
@@ -175,6 +179,7 @@ async function init() {
     els.createdToInput,
     els.updatedFromInput,
     els.updatedToInput,
+    els.modelEvalOnly,
     els.overlapOnly,
     els.groupCoverOnly,
     els.criticalOnly,
@@ -187,6 +192,7 @@ async function init() {
     els.toggleEvalInfoBtn,
     els.modelEpisodeSelect,
     els.modelNameSelect,
+    els.toggleSidebarBtn,
   ] = [
     $("searchInput"),
     $("issueTypeSelect"),
@@ -198,6 +204,7 @@ async function init() {
     $("createdToInput"),
     $("updatedFromInput"),
     $("updatedToInput"),
+    $("modelEvalOnly"),
     $("overlapOnly"),
     $("groupCoverOnly"),
     $("criticalOnly"),
@@ -210,6 +217,7 @@ async function init() {
     $("toggleEvalInfoBtn"),
     $("modelEpisodeSelect"),
     $("modelNameSelect"),
+    $("toggleSidebarBtn"),
   ];
 
   const [summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments, modelSegments, modelSummary] = await Promise.all([
@@ -298,6 +306,14 @@ function bindEvents() {
       renderAll();
     });
   }
+  els.modelEvalOnly.addEventListener("change", () => {
+    state.filters.modelEvalOnly = els.modelEvalOnly.checked;
+    if (state.filters.modelEvalOnly && state.modelFilters.episode === "all") {
+      state.modelFilters.episode = state.modelSummary?.episodes?.[0]?.episode_id || "all";
+      els.modelEpisodeSelect.value = state.modelFilters.episode;
+    }
+    renderAll();
+  });
   els.overlapOnly.addEventListener("change", () => {
     state.filters.overlapOnly = els.overlapOnly.checked;
     renderAll();
@@ -328,6 +344,10 @@ function bindEvents() {
     state.evalInfoCollapsed = !state.evalInfoCollapsed;
     renderEvalInfo();
   });
+  els.toggleSidebarBtn.addEventListener("click", () => {
+    state.sidebarCollapsed = !state.sidebarCollapsed;
+    renderSidebarState();
+  });
   els.modelEpisodeSelect.addEventListener("change", () => {
     state.modelFilters.episode = els.modelEpisodeSelect.value;
     renderModelDataset();
@@ -336,6 +356,11 @@ function bindEvents() {
     state.modelFilters.model = els.modelNameSelect.value;
     renderModelDataset();
   });
+}
+
+function renderSidebarState() {
+  $("appShell").classList.toggle("sidebar-collapsed", state.sidebarCollapsed);
+  els.toggleSidebarBtn.textContent = state.sidebarCollapsed ? "Show Filters" : "Hide Filters";
 }
 
 function resetFilters() {
@@ -350,6 +375,7 @@ function resetFilters() {
     createdTo: "",
     updatedFrom: "",
     updatedTo: "",
+    modelEvalOnly: false,
     overlapOnly: false,
     groupCoverOnly: false,
     criticalOnly: false,
@@ -367,6 +393,7 @@ function resetFilters() {
   els.createdToInput.value = "";
   els.updatedFromInput.value = "";
   els.updatedToInput.value = "";
+  els.modelEvalOnly.checked = false;
   els.overlapOnly.checked = false;
   els.groupCoverOnly.checked = false;
   els.criticalOnly.checked = false;
@@ -441,10 +468,33 @@ function groupCoversForTask(taskId) {
   return state.coveringSegments.filter((cover) => cover.task_id === taskId);
 }
 
+function modelEvalEpisodeIds() {
+  return new Set((state.modelSummary?.episodes || []).flatMap((episode) => [
+    episode.episode_id,
+    episode.episode_uuid,
+  ]));
+}
+
+function isModelEvalTask(task, episodeIds = modelEvalEpisodeIds()) {
+  const fields = [
+    task.task_id,
+    task.client_folder_name,
+    task.source_uuid,
+    task.uuid,
+    task.short,
+  ].filter(Boolean);
+  return fields.some((value) => {
+    const text = String(value);
+    return episodeIds.has(text) || episodeIds.has(text.slice(0, 8));
+  });
+}
+
 function filteredTasks() {
+  const modelEpisodeIds = modelEvalEpisodeIds();
   const filtered = state.tasks.filter((task) => {
     const taskIssues = issuesForTask(task.task_id);
     const haystack = `${task.task_id} ${task.task_name} ${task.client_folder_name} ${task.trainer_user_id}`.toLowerCase();
+    if (state.filters.modelEvalOnly && !isModelEvalTask(task, modelEpisodeIds)) return false;
     if (state.filters.search && !haystack.includes(state.filters.search)) return false;
     if (state.filters.trainer !== "all" && task.trainer_user_id !== state.filters.trainer) return false;
     if (state.filters.overlapOnly && !task.overlap_count) return false;
@@ -471,9 +521,10 @@ function filteredTasks() {
 
 function renderAll() {
   const tasks = filteredTasks();
-  if (!tasks.some((task) => task.task_id === state.selectedTaskId)) {
+  if (!state.filters.modelEvalOnly && !tasks.some((task) => task.task_id === state.selectedTaskId)) {
     state.selectedTaskId = tasks[0]?.task_id || state.tasks[0]?.task_id || null;
   }
+  renderSidebarState();
   renderStats(tasks);
   renderModelDataset();
   renderEvalInfo();
@@ -519,23 +570,28 @@ function renderModelDataset() {
     grouped.get(key).push(row);
   }
   const runCards = [...grouped.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
+    .sort((a, b) => modelRunSortRank(a[0]) - modelRunSortRank(b[0]) || a[0].localeCompare(b[0]))
     .map(([, runRows]) => renderModelRunCard(runRows))
     .join("");
   $("modelRunsList").innerHTML = runCards || `<div class="empty-state">No model outputs match the selected filters.</div>`;
+  bindModelTimelineInteractions();
+  renderSelectedModelSegment();
 }
 
 function renderModelRunCard(runRows) {
   const first = runRows[0];
   const segments = runRows.filter((row) => row.caption);
+  const runKey = `${first.episode_id}::${first.model}`;
   const cost = Number(first.model_cost);
   const phaseText = `${first.parsed_phase_count}/${first.model_phase_count} phases`;
+  const overlaps = modelOverlapBands(segments, Number(first.duration_secs));
+  const gaps = modelGapBands(segments, Number(first.duration_secs));
   const captionRows = segments.slice(0, 3).map((row) => `
     <li><strong>${escapeHtml(row.start)}-${escapeHtml(row.end)}</strong> ${escapeHtml(row.caption)}</li>
   `).join("");
   const more = segments.length > 3 ? `<li class="muted">+ ${segments.length - 3} more segments in CSV/JSON</li>` : "";
   return `
-    <article class="model-run-card">
+    <article class="model-run-card" draggable="true" data-run-key="${escapeHtml(runKey)}">
       <div class="model-run-header">
         <div>
           <h4>${escapeHtml(first.episode_id)} · ${escapeHtml(first.task_name)}</h4>
@@ -543,8 +599,175 @@ function renderModelRunCard(runRows) {
         </div>
         <span>${escapeHtml(String(first.duration_secs))}s</span>
       </div>
+      ${renderModelTimeline(segments, Number(first.duration_secs), overlaps, gaps)}
       <ul>${captionRows || `<li class="muted">No phases generated by this model.</li>`}${more}</ul>
     </article>
+  `;
+}
+
+function modelRunSortRank(runKey) {
+  const index = state.modelRunOrder.indexOf(runKey);
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+function modelOverlapBands(segments, duration) {
+  const valid = segments
+    .map((segment) => ({
+      start: Number(segment.start_sec),
+      end: Number(segment.end_sec),
+      phase: segment.phase_index,
+    }))
+    .filter((segment) => Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start)
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  const bands = [];
+  for (let i = 0; i < valid.length; i += 1) {
+    for (let j = i + 1; j < valid.length; j += 1) {
+      if (valid[j].start >= valid[i].end) break;
+      const start = Math.max(valid[i].start, valid[j].start);
+      const end = Math.min(valid[i].end, valid[j].end);
+      const seconds = end - start;
+      if (seconds <= 0) continue;
+      bands.push({
+        left: (start / duration) * 100,
+        width: Math.max(0.25, (seconds / duration) * 100),
+        title: `overlap: phases ${valid[i].phase} + ${valid[j].phase}, ${seconds.toFixed(3)}s`,
+      });
+    }
+  }
+  return bands;
+}
+
+function modelGapBands(segments, duration, minGapSeconds = 1) {
+  const valid = segments
+    .map((segment) => ({
+      start: Number(segment.start_sec),
+      end: Number(segment.end_sec),
+    }))
+    .filter((segment) => Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start)
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  const bands = [];
+  let cursor = null;
+  for (const segment of valid) {
+    if (cursor !== null && segment.start > cursor) {
+      const seconds = segment.start - cursor;
+      if (seconds >= minGapSeconds) {
+        bands.push({
+          left: (cursor / duration) * 100,
+          width: Math.max(0.25, (seconds / duration) * 100),
+          title: `gap: ${seconds.toFixed(3)}s (${fmtTime(cursor)} - ${fmtTime(segment.start)})`,
+        });
+      }
+    }
+    cursor = cursor === null ? segment.end : Math.max(cursor, segment.end);
+  }
+  return bands;
+}
+
+function renderModelTimeline(segments, duration, overlaps, gaps) {
+  if (!segments.length || !Number.isFinite(duration) || duration <= 0) {
+    return `<div class="model-mini-timeline empty">No timeline segments</div>`;
+  }
+  const blocks = segments.map((segment, index) => {
+    const start = Number(segment.start_sec);
+    const end = Number(segment.end_sec);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return "";
+    const left = Math.max(0, (start / duration) * 100);
+    const width = Math.max(0.6, ((end - start) / duration) * 100);
+    const title = `${segment.model} phase ${segment.phase_index}\\n${segment.start} - ${segment.end}\\n${segment.caption}`;
+    const segmentId = modelSegmentId(segment);
+    return `
+      <div
+        class="model-mini-segment tone-${index % 5}"
+        data-model-segment-id="${escapeHtml(segmentId)}"
+        title="${escapeHtml(title)}"
+        style="left:${left}%;width:${width}%"
+      >${escapeHtml(String(segment.phase_index))}</div>`;
+  }).join("");
+  return `
+    <div class="model-timeline-wrap">
+      <div class="model-timeline-meta">
+        <span>Timeline</span>
+        <span>${fmt(segments.length)} segments · ${fmt(overlaps.length)} overlaps · ${fmt(gaps.length)} gaps</span>
+      </div>
+      <div class="model-mini-timeline">
+        ${gaps.map((gap) => `<div class="model-gap-band" title="${escapeHtml(gap.title)}" style="left:${gap.left}%;width:${gap.width}%"></div>`).join("")}
+        ${overlaps.map((overlap) => `<div class="model-overlap-band" title="${escapeHtml(overlap.title)}" style="left:${overlap.left}%;width:${overlap.width}%"></div>`).join("")}
+        ${blocks}
+      </div>
+    </div>
+  `;
+}
+
+function modelSegmentId(segment) {
+  return `${segment.episode_id}::${segment.model}::${segment.phase_index}`;
+}
+
+function findModelSegment(segmentId) {
+  return state.modelSegments.find((segment) => modelSegmentId(segment) === segmentId) || null;
+}
+
+function bindModelTimelineInteractions() {
+  document.querySelectorAll("[data-model-segment-id]").forEach((segmentEl) => {
+    segmentEl.addEventListener("click", (event) => {
+      event.stopPropagation();
+      state.selectedModelSegmentId = segmentEl.dataset.modelSegmentId;
+      renderSelectedModelSegment();
+      document.querySelectorAll(".model-mini-segment.selected").forEach((el) => el.classList.remove("selected"));
+      segmentEl.classList.add("selected");
+    });
+  });
+
+  document.querySelectorAll("[data-run-key]").forEach((card) => {
+    card.addEventListener("dragstart", (event) => {
+      event.dataTransfer.setData("text/plain", card.dataset.runKey);
+      card.classList.add("dragging");
+    });
+    card.addEventListener("dragend", () => {
+      card.classList.remove("dragging");
+    });
+    card.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      card.classList.add("drag-over");
+    });
+    card.addEventListener("dragleave", () => {
+      card.classList.remove("drag-over");
+    });
+    card.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const draggedKey = event.dataTransfer.getData("text/plain");
+      const targetKey = card.dataset.runKey;
+      reorderModelRuns(draggedKey, targetKey);
+      renderModelDataset();
+    });
+  });
+}
+
+function reorderModelRuns(draggedKey, targetKey) {
+  if (!draggedKey || !targetKey || draggedKey === targetKey) return;
+  const currentKeys = [...document.querySelectorAll("[data-run-key]")].map((card) => card.dataset.runKey);
+  const baseOrder = state.modelRunOrder.length ? state.modelRunOrder : currentKeys;
+  const nextOrder = baseOrder.filter((key) => key !== draggedKey);
+  const targetIndex = nextOrder.indexOf(targetKey);
+  nextOrder.splice(targetIndex === -1 ? nextOrder.length : targetIndex, 0, draggedKey);
+  state.modelRunOrder = nextOrder;
+}
+
+function renderSelectedModelSegment() {
+  const segment = findModelSegment(state.selectedModelSegmentId);
+  if (!segment) {
+    $("modelSegmentBadge").textContent = "none";
+    $("modelSegmentDetail").innerHTML = '<div class="empty">Click a model timeline segment to read its full caption.</div>';
+    return;
+  }
+  $("modelSegmentBadge").textContent = segment.model;
+  $("modelSegmentDetail").innerHTML = `
+    <div class="kv"><span>Episode</span><strong>${escapeHtml(segment.episode_id)} · ${escapeHtml(segment.task_name)}</strong></div>
+    <div class="kv"><span>Model</span><strong>${escapeHtml(segment.model)}</strong></div>
+    <div class="kv"><span>Phase</span><strong>${escapeHtml(String(segment.phase_index))}</strong></div>
+    <div class="kv"><span>Time</span><strong>${escapeHtml(segment.start)} - ${escapeHtml(segment.end)} (${fmt(segment.duration_phase_secs, 3)}s)</strong></div>
+    <div class="caption-reader">
+      <p>${escapeHtml(segment.caption || "No caption")}</p>
+    </div>
   `;
 }
 
@@ -614,6 +837,10 @@ function renderStats(tasks) {
 }
 
 function renderTaskList(tasks) {
+  if (state.filters.modelEvalOnly) {
+    renderModelEpisodeList();
+    return;
+  }
   $("taskCount").textContent = fmt(tasks.length);
   $("taskList").innerHTML = tasks
     .slice(0, 250)
@@ -641,6 +868,41 @@ function renderTaskList(tasks) {
     card.addEventListener("click", () => {
       state.selectedTaskId = card.dataset.taskId;
       state.selectedSegmentId = null;
+      renderAll();
+    });
+  });
+}
+
+function renderModelEpisodeList() {
+  const episodes = (state.modelSummary?.episodes || []).filter((episode) => {
+    const haystack = `${episode.episode_id} ${episode.episode_uuid} ${episode.task_name}`.toLowerCase();
+    return !state.filters.search || haystack.includes(state.filters.search);
+  });
+  $("taskCount").textContent = fmt(episodes.length);
+  $("taskList").innerHTML = episodes
+    .map((episode) => {
+      const runs = state.modelSummary.model_runs.filter((run) => run.episode_id === episode.episode_id);
+      const active = state.modelFilters.episode === episode.episode_id ? "active" : "";
+      const segmentCount = state.modelSegments.filter((row) => row.episode_id === episode.episode_id && row.caption).length;
+      return `
+        <article class="task-card ${active}" data-model-episode-id="${escapeHtml(episode.episode_id)}">
+          <div class="task-card-title">
+            <span>${escapeHtml(episode.task_name || "Untitled episode")}</span>
+            <span>${fmt(runs.length)}</span>
+          </div>
+          <div class="task-meta">${escapeHtml(episode.episode_id)} · ${escapeHtml(episode.episode_uuid)} · ${fmt(episode.duration_secs, 1)}s</div>
+          <div class="badge-row">
+            <span class="badge">${fmt(runs.length)} model runs</span>
+            <span class="badge medium">${fmt(segmentCount)} segments</span>
+          </div>
+        </article>`;
+    })
+    .join("");
+
+  document.querySelectorAll("[data-model-episode-id]").forEach((card) => {
+    card.addEventListener("click", () => {
+      state.modelFilters.episode = card.dataset.modelEpisodeId;
+      els.modelEpisodeSelect.value = state.modelFilters.episode;
       renderAll();
     });
   });

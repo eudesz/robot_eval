@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Zion Final Annotation EVALs</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./model_dashboard.css" />
   </head>
   <body>
-    <div class="app-shell">
+    <div id="appShell" class="app-shell">
       <aside class="sidebar">
         <div class="brand">
           <div class="eyebrow">Zion QA</div>
@@ -89,6 +89,7 @@
           </div>
 
           <div class="toggle-row">
+            <label class="checkbox"><input id="modelEvalOnly" type="checkbox" /> Model eval tasks only</label>
             <label class="checkbox"><input id="overlapOnly" type="checkbox" /> Has overlap</label>
             <label class="checkbox"><input id="groupCoverOnly" type="checkbox" /> Has group cover</label>
             <label class="checkbox"><input id="criticalOnly" type="checkbox" /> Critical only</label>
@@ -113,6 +114,7 @@
             <p id="selectedSubtitle">Parsing final annotation data.</p>
           </div>
           <div class="actions">
+            <button id="toggleSidebarBtn" type="button">Hide Filters</button>
             <select id="exportTypeSelect" aria-label="Export type">
               <option value="tasks_csv">Filtered Tasks CSV</option>
               <option value="issues_csv">Filtered Issues CSV</option>
@@ -149,7 +151,24 @@
             </label>
           </div>
           <div id="modelSummaryGrid" class="stats-grid compact-stats"></div>
-          <div id="modelRunsList" class="model-runs-list"></div>
+          <div class="model-compare-layout">
+            <div>
+              <div class="section-header">
+                <h2>Model Timelines</h2>
+                <span>drag to reorder</span>
+              </div>
+              <div id="modelRunsList" class="model-runs-list"></div>
+            </div>
+            <aside class="model-caption-panel">
+              <div class="section-header">
+                <h2>Selected Model Segment</h2>
+                <span id="modelSegmentBadge" class="badge">none</span>
+              </div>
+              <div id="modelSegmentDetail" class="selected-segment-detail">
+                <div class="empty">Click a model timeline segment to read its full caption.</div>
+              </div>
+            </aside>
+          </div>
         </section>
 
         <section class="eval-info-panel">
@@ -229,6 +248,6 @@
       </main>
     </div>
 
-    <script src="./app.js"></script>
+    <script src="./model_dashboard.js"></script>
   </body>
 </html>
