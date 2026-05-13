@@ -203,7 +203,6 @@ async function init() {
     els.loadNewTasksBtn,
     els.downloadNewOnlyCsvBtn,
     els.downloadDuplicateCsvBtn,
-    els.downloadSidebarFilteredBtn,
   ] = [
     $("searchInput"),
     $("issueTypeSelect"),
@@ -231,7 +230,6 @@ async function init() {
     $("loadNewTasksBtn"),
     $("downloadNewOnlyCsvBtn"),
     $("downloadDuplicateCsvBtn"),
-    $("downloadSidebarFilteredBtn"),
   ];
 
   const [summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments] = await Promise.all([
@@ -342,7 +340,6 @@ function bindEvents() {
   els.loadNewTasksBtn.addEventListener("click", loadNewTasksIntoDashboard);
   els.downloadNewOnlyCsvBtn.addEventListener("click", () => downloadCsvRows("zion_new_tasks_only.csv", state.csvLoader.newOnlyRows));
   els.downloadDuplicateCsvBtn.addEventListener("click", () => downloadCsvRows("zion_duplicate_tasks.csv", state.csvLoader.duplicateRows));
-  els.downloadSidebarFilteredBtn.addEventListener("click", downloadSidebarFilteredTasks);
 }
 
 function resetFilters() {
@@ -544,7 +541,6 @@ function renderStats(tasks) {
 
 function renderTaskList(tasks) {
   $("taskCount").textContent = fmt(tasks.length);
-  els.downloadSidebarFilteredBtn.disabled = !tasks.length;
   $("taskList").innerHTML = tasks
     .slice(0, 250)
     .map((task) => {
@@ -576,8 +572,7 @@ function renderTaskList(tasks) {
   });
 }
 
-function downloadSidebarFilteredTasks() {
-  const tasks = filteredTasks();
+function exportSidebarFilteredTasks(tasks = filteredTasks()) {
   const header = [
     "task_id",
     "client_folder_name",
@@ -1271,6 +1266,11 @@ function exportFilteredCsv() {
   if (exportType === "tasks_csv") {
     const header = ["task_id", "task_name", "trainer_user_id", "risk_score", "issue_count", "critical_count", "high_count", "overlap_count", "group_cover_count"];
     downloadFile("zion_filtered_tasks.csv", toCsv(tasks, header), "text/csv;charset=utf-8");
+    return;
+  }
+
+  if (exportType === "sidebar_tasks_csv") {
+    exportSidebarFilteredTasks(tasks);
     return;
   }
 
