@@ -151,6 +151,16 @@ function fmtTime(seconds) {
   return `${String(minutes).padStart(2, "0")}:${rem.toFixed(3).padStart(6, "0")}`;
 }
 
+function parseTimeToSeconds(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const text = String(value).trim();
+  if (/^\d+(\.\d+)?$/.test(text)) return Number(text);
+  const match = text.match(/^(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?$/);
+  if (!match) return null;
+  const millis = Number((match[3] || "0").padEnd(3, "0"));
+  return Number(match[1]) * 60 + Number(match[2]) + millis / 1000;
+}
+
 function severityClass(severity) {
   return ["critical", "high", "medium", "low"].includes(severity) ? severity : "";
 }
@@ -190,6 +200,7 @@ async function init() {
     els.newCsvInput,
     els.previousCsvInput,
     els.dedupeKeySelect,
+    els.loadNewTasksBtn,
     els.downloadNewOnlyCsvBtn,
     els.downloadDuplicateCsvBtn,
   ] = [
@@ -216,6 +227,7 @@ async function init() {
     $("newCsvInput"),
     $("previousCsvInput"),
     $("dedupeKeySelect"),
+    $("loadNewTasksBtn"),
     $("downloadNewOnlyCsvBtn"),
     $("downloadDuplicateCsvBtn"),
   ];
@@ -239,17 +251,19 @@ async function init() {
 }
 
 function hydrateFilters() {
+  hydrateDynamicFilters();
+}
+
+function hydrateDynamicFilters() {
   const issueTypes = [...new Set(state.issues.map((issue) => issue.eval_name))].sort();
-  els.issueTypeSelect.insertAdjacentHTML(
-    "beforeend",
-    issueTypes.map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`).join("")
-  );
+  const currentIssueType = els.issueTypeSelect.value || "all";
+  els.issueTypeSelect.innerHTML = `<option value="all">All issue types</option>${issueTypes.map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`).join("")}`;
+  els.issueTypeSelect.value = issueTypes.includes(currentIssueType) ? currentIssueType : "all";
 
   const trainers = [...new Set(state.tasks.map((task) => task.trainer_user_id).filter(Boolean))].sort();
-  els.trainerSelect.insertAdjacentHTML(
-    "beforeend",
-    trainers.map((trainer) => `<option value="${escapeHtml(trainer)}">${escapeHtml(trainer)}</option>`).join("")
-  );
+  const currentTrainer = els.trainerSelect.value || "all";
+  els.trainerSelect.innerHTML = `<option value="all">All trainers</option>${trainers.map((trainer) => `<option value="${escapeHtml(trainer)}">${escapeHtml(trainer)}</option>`).join("")}`;
+  els.trainerSelect.value = trainers.includes(currentTrainer) ? currentTrainer : "all";
 }
 
 function bindEvents() {
@@ -323,6 +337,7 @@ function bindEvents() {
   els.newCsvInput.addEventListener("change", () => loadCsvFile("new", els.newCsvInput.files?.[0]));
   els.previousCsvInput.addEventListener("change", () => loadCsvFile("previous", els.previousCsvInput.files?.[0]));
   els.dedupeKeySelect.addEventListener("change", recomputeCsvDiff);
+  els.loadNewTasksBtn.addEventListener("click", loadNewTasksIntoDashboard);
   els.downloadNewOnlyCsvBtn.addEventListener("click", () => downloadCsvRows("zion_new_tasks_only.csv", state.csvLoader.newOnlyRows));
   els.downloadDuplicateCsvBtn.addEventListener("click", () => downloadCsvRows("zion_duplicate_tasks.csv", state.csvLoader.duplicateRows));
 }
@@ -1007,12 +1022,211 @@ function renderCsvLoaderSummary() {
     : "Load a new CSV to calculate which tasks are new versus already present.";
   els.downloadNewOnlyCsvBtn.disabled = !state.csvLoader.newOnlyRows.length;
   els.downloadDuplicateCsvBtn.disabled = !state.csvLoader.duplicateRows.length;
+  els.loadNewTasksBtn.disabled = !state.csvLoader.newOnlyRows.length;
 }
 
 function downloadCsvRows(filename, rows) {
   if (!rows.length) return;
   const header = Object.keys(rows[0]);
   downloadFile(filename, toCsv(rows, header), "text/csv;charset=utf-8");
+}
+
+function safeJsonParse(value, fallback = {}) {
+  try {
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeSegments(taskId, source, annotation) {
+  return (annotation.phase_captions || []).map((segment, index) => {
+    const startSec = parseTimeToSeconds(segment.start);
+    const endSec = parseTimeToSeconds(segment.end);
+    return {
+      segment_id: `${taskId}:${source}:${index}`,
+      task_id: taskId,
+      source,
+      array_index: index,
+      phase_index: segment.phase_index ?? index,
+      start: segment.start ?? "",
+      end: segment.end ?? "",
+      start_sec: startSec,
+      end_sec: endSec,
+      duration_sec: startSec !== null && endSec !== null ? Math.max(0, endSec - startSec) : null,
+      caption: segment.caption || "",
+      visual_evidence: segment.visual_evidence || "",
+      covered_markers: segment.covered_markers || [],
+      timestamp_start_issue: null,
+      timestamp_end_issue: null,
+    };
+  });
+}
+
+function issueSeverityCounts(taskIssues) {
+  return {
+    critical_count: taskIssues.filter((issue) => issue.severity === "critical").length,
+    high_count: taskIssues.filter((issue) => issue.severity === "high").length,
+    medium_count: taskIssues.filter((issue) => issue.severity === "medium").length,
+    low_count: taskIssues.filter((issue) => issue.severity === "low").length,
+  };
+}
+
+function buildOverlapData(task, finalSegments) {
+  const issues = [];
+  const overlaps = [];
+  const valid = finalSegments
+    .filter((segment) => segment.start_sec !== null && segment.end_sec !== null && segment.end_sec > segment.start_sec)
+    .sort((a, b) => a.start_sec - b.start_sec || a.end_sec - b.end_sec);
+  for (let i = 0; i < valid.length; i += 1) {
+    for (let j = i + 1; j < valid.length; j += 1) {
+      if (valid[j].start_sec >= valid[i].end_sec) break;
+      const start = Math.max(valid[i].start_sec, valid[j].start_sec);
+      const end = Math.min(valid[i].end_sec, valid[j].end_sec);
+      const seconds = end - start;
+      if (seconds <= 0) continue;
+      const overlap = {
+        task_id: task.task_id,
+        segment_a_id: valid[i].segment_id,
+        segment_b_id: valid[j].segment_id,
+        segment_a_index: valid[i].array_index,
+        segment_b_index: valid[j].array_index,
+        overlap_start_sec: start,
+        overlap_end_sec: end,
+        overlap_seconds: seconds,
+        segment_a_caption: valid[i].caption,
+        segment_b_caption: valid[j].caption,
+        severity: seconds >= 2 ? "critical" : "high",
+      };
+      overlaps.push(overlap);
+      issues.push({
+        issue_id: `UPLOAD-${task.task_id}-overlap-${i}-${j}`,
+        task_id: task.task_id,
+        segment_id: valid[j].segment_id,
+        source: "final",
+        eval_name: "segment_overlap_eval",
+        severity: overlap.severity,
+        message: "Uploaded CSV final segments overlap in time",
+        evidence: `${fmt(seconds, 3)}s overlap between segments ${valid[i].array_index} and ${valid[j].array_index}`,
+        start_sec: start,
+        end_sec: end,
+        suggested_action: "Review whether one segment should be split, merged, or removed.",
+      });
+    }
+  }
+  return { issues, overlaps };
+}
+
+function buildGapIssues(task, finalSegments, minGapSeconds = 3) {
+  const issues = [];
+  const valid = finalSegments
+    .filter((segment) => segment.start_sec !== null && segment.end_sec !== null && segment.end_sec > segment.start_sec)
+    .sort((a, b) => a.start_sec - b.start_sec || a.end_sec - b.end_sec);
+  let cursor = null;
+  for (const segment of valid) {
+    if (cursor && segment.start_sec > cursor.end_sec) {
+      const gap = segment.start_sec - cursor.end_sec;
+      if (gap >= minGapSeconds) {
+        issues.push({
+          issue_id: `UPLOAD-${task.task_id}-gap-${cursor.array_index}-${segment.array_index}`,
+          task_id: task.task_id,
+          segment_id: segment.segment_id,
+          source: "final",
+          eval_name: "timestamp_gap_eval",
+          severity: gap >= 8 ? "high" : "medium",
+          message: "Uploaded CSV final timeline has a large gap",
+          evidence: `${fmt(gap, 3)}s gap before segment ${segment.array_index}`,
+          start_sec: cursor.end_sec,
+          end_sec: segment.start_sec,
+          suggested_action: "Check whether a segment or no-action phase is missing.",
+        });
+      }
+    }
+    if (!cursor || segment.end_sec > cursor.end_sec) cursor = segment;
+  }
+  return issues;
+}
+
+function buildDashboardDataFromRows(rows) {
+  const tasks = [];
+  const originalSegments = [];
+  const finalSegments = [];
+  const issues = [];
+  const overlaps = [];
+  for (const row of rows) {
+    const clientAnnotation = safeJsonParse(row.client_annotations, {});
+    const finalAnnotation = safeJsonParse(row.final_annotations, {});
+    const taskName = finalAnnotation.task_name || clientAnnotation.task_name || row.client_folder_name || row.task_id;
+    const task = {
+      task_id: row.task_id,
+      client_folder_name: row.client_folder_name,
+      task_name: taskName,
+      status: row.status || "",
+      trainer_user_id: row.trainer_user_id || "",
+      reviewer_user_id: row.reviewer_user_id || "",
+      review_score: row.review_score || "",
+      review_comments: row.review_comments || "",
+      actual_video_duration: Number(row.actual_video_duration || finalAnnotation.duration_secs || clientAnnotation.duration_secs || 0),
+      final_duration_secs: Number(finalAnnotation.duration_secs || row.actual_video_duration || clientAnnotation.duration_secs || 0),
+      original_segment_count: (clientAnnotation.phase_captions || []).length,
+      final_segment_count: (finalAnnotation.phase_captions || []).length,
+      object_inventory: finalAnnotation.object_inventory || [],
+      object_consistency_notes: finalAnnotation.object_consistency_notes || [],
+      error_categories: safeJsonParse(row.error_categories, {}),
+      date_created: row.date_created || "",
+      date_updated: row.date_updated || "",
+      issue_count: 0,
+      critical_count: 0,
+      high_count: 0,
+      medium_count: 0,
+      low_count: 0,
+      overlap_count: 0,
+      max_severity_rank: 0,
+      risk_score: 0,
+      eval_names: [],
+      group_cover_count: 0,
+    };
+    const taskOriginalSegments = normalizeSegments(task.task_id, "original", clientAnnotation);
+    const taskFinalSegments = normalizeSegments(task.task_id, "final", finalAnnotation);
+    const overlapData = buildOverlapData(task, taskFinalSegments);
+    const gapIssues = buildGapIssues(task, taskFinalSegments);
+    const taskIssues = [...overlapData.issues, ...gapIssues];
+    const counts = issueSeverityCounts(taskIssues);
+    Object.assign(task, counts);
+    task.issue_count = taskIssues.length;
+    task.overlap_count = overlapData.overlaps.length;
+    task.eval_names = [...new Set(taskIssues.map((issue) => issue.eval_name))];
+    task.max_severity_rank = Math.max(0, ...taskIssues.map((issue) => severityRank(issue.severity)));
+    task.risk_score = task.critical_count * 100 + task.high_count * 40 + task.medium_count * 10 + task.low_count * 2;
+    tasks.push(task);
+    originalSegments.push(...taskOriginalSegments);
+    finalSegments.push(...taskFinalSegments);
+    issues.push(...taskIssues);
+    overlaps.push(...overlapData.overlaps);
+  }
+  return { tasks, originalSegments, finalSegments, issues, overlaps };
+}
+
+function loadNewTasksIntoDashboard() {
+  const data = buildDashboardDataFromRows(state.csvLoader.newOnlyRows);
+  if (!data.tasks.length) return;
+  const taskIds = new Set(data.tasks.map((task) => task.task_id));
+  state.tasks = [...state.tasks.filter((task) => !taskIds.has(task.task_id)), ...data.tasks];
+  state.originalSegments = [...state.originalSegments.filter((segment) => !taskIds.has(segment.task_id)), ...data.originalSegments];
+  state.finalSegments = [...state.finalSegments.filter((segment) => !taskIds.has(segment.task_id)), ...data.finalSegments];
+  state.issues = [...state.issues.filter((issue) => !taskIds.has(issue.task_id)), ...data.issues];
+  state.overlaps = [...state.overlaps.filter((overlap) => !taskIds.has(overlap.task_id)), ...data.overlaps];
+  state.coveringSegments = state.coveringSegments.filter((cover) => !taskIds.has(cover.task_id));
+  state.summary = {
+    ...state.summary,
+    task_count: state.tasks.length,
+    issue_count: state.issues.length,
+    uploaded_task_count: data.tasks.length,
+  };
+  state.selectedTaskId = data.tasks[0].task_id;
+  hydrateDynamicFilters();
+  renderAll();
+  $("csvLoaderSummary").innerHTML += ` <strong>${fmt(data.tasks.length, 0)}</strong> new tasks loaded into the dashboard.`;
 }
 
 function exportFilteredCsv() {
