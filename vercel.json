@@ -1,10 +1,5 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
-  ]
+  "buildCommand": "echo 'No build needed for static site'",
+  "outputDirectory": "zion_eval_app",
+  "installCommand": "echo 'No install needed'"
 }
