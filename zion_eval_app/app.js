@@ -38,6 +38,9 @@ const state = {
     groupCoverOnly: false,
     criticalOnly: false,
     noFlagsOnly: false,
+    perfectTimelineOnly: false,
+    autoCorrectableOnly: false,
+    needsRegenerationOnly: false,
     issuesOnlyTimeline: false,
     segmentIssueTypes: [],
     zoom: 1,
@@ -419,6 +422,9 @@ async function init() {
     els.groupCoverOnly,
     els.criticalOnly,
     els.noFlagsOnly,
+    els.perfectTimelineOnly,
+    els.autoCorrectableOnly,
+    els.needsRegenerationOnly,
     els.zoomRange,
     els.issuesOnlyTimeline,
     els.resetFiltersBtn,
@@ -458,6 +464,9 @@ async function init() {
     $("groupCoverOnly"),
     $("criticalOnly"),
     $("noFlagsOnly"),
+    $("perfectTimelineOnly"),
+    $("autoCorrectableOnly"),
+    $("needsRegenerationOnly"),
     $("zoomRange"),
     $("issuesOnlyTimeline"),
     $("resetFiltersBtn"),
@@ -678,6 +687,18 @@ function bindEvents() {
     state.filters.noFlagsOnly = els.noFlagsOnly.checked;
     renderAll();
   });
+  els.perfectTimelineOnly.addEventListener("change", () => {
+    state.filters.perfectTimelineOnly = els.perfectTimelineOnly.checked;
+    renderAll();
+  });
+  els.autoCorrectableOnly.addEventListener("change", () => {
+    state.filters.autoCorrectableOnly = els.autoCorrectableOnly.checked;
+    renderAll();
+  });
+  els.needsRegenerationOnly.addEventListener("change", () => {
+    state.filters.needsRegenerationOnly = els.needsRegenerationOnly.checked;
+    renderAll();
+  });
   els.zoomRange.addEventListener("input", () => {
     state.filters.zoom = Number(els.zoomRange.value);
     renderTimeline();
@@ -730,6 +751,9 @@ function resetFilters() {
     groupCoverOnly: false,
     criticalOnly: false,
     noFlagsOnly: false,
+    perfectTimelineOnly: false,
+    autoCorrectableOnly: false,
+    needsRegenerationOnly: false,
     issuesOnlyTimeline: false,
     segmentIssueTypes: [],
     zoom: 1,
@@ -751,6 +775,9 @@ function resetFilters() {
   els.groupCoverOnly.checked = false;
   els.criticalOnly.checked = false;
   els.noFlagsOnly.checked = false;
+  els.perfectTimelineOnly.checked = false;
+  els.autoCorrectableOnly.checked = false;
+  els.needsRegenerationOnly.checked = false;
   els.issuesOnlyTimeline.checked = false;
   els.segmentIssueTypeMenu.querySelectorAll("input").forEach((input) => {
     input.checked = false;
@@ -835,6 +862,15 @@ function filteredTasks() {
     if (state.filters.groupCoverOnly && !task.group_cover_count) return false;
     if (state.filters.criticalOnly && !task.critical_count) return false;
     if (state.filters.noFlagsOnly && task.issue_count !== 0) return false;
+    
+    // Timeline Quality filters
+    const isPerfectTimeline = (task.auto_correctable_count || 0) === 0 && (task.needs_regeneration_count || 0) === 0;
+    const hasAutoCorrectableIssues = (task.auto_correctable_count || 0) > 0;
+    const hasRegenerationIssues = (task.needs_regeneration_count || 0) > 0;
+    
+    if (state.filters.perfectTimelineOnly && !isPerfectTimeline) return false;
+    if (state.filters.autoCorrectableOnly && !hasAutoCorrectableIssues) return false;
+    if (state.filters.needsRegenerationOnly && !hasRegenerationIssues) return false;
     if (!isWithinDateRange(task.date_created, state.filters.createdFrom, state.filters.createdTo)) return false;
     if (!isWithinDateRange(task.date_updated, state.filters.updatedFrom, state.filters.updatedTo)) return false;
     if (state.filters.issueTypes.length && !taskIssues.some((issue) => state.filters.issueTypes.includes(issue.eval_name))) return false;
@@ -908,6 +944,13 @@ function renderStats(tasks) {
   const groupCoverTaskCount = tasks.filter((task) => task.group_cover_count > 0).length;
   const approvedTaskCount = tasks.filter((task) => decisionForTask(task.task_id).status === "approved").length;
   const rejectedTaskCount = tasks.filter((task) => decisionForTask(task.task_id).status === "rejected").length;
+  
+  // Timeline Quality metrics
+  const perfectTimelineCount = tasks.filter((task) => 
+    (task.auto_correctable_count || 0) === 0 && (task.needs_regeneration_count || 0) === 0
+  ).length;
+  const autoCorrectableCount = tasks.filter((task) => (task.auto_correctable_count || 0) > 0).length;
+  const needsRegenerationCount = tasks.filter((task) => (task.needs_regeneration_count || 0) > 0).length;
   let critical = 0;
   let high = 0;
   for (const task of tasks) {
@@ -924,6 +967,9 @@ function renderStats(tasks) {
     ["Group Covers", fmt(groupCoverTaskCount), "Tasks with macro segments"],
     ["Critical", fmt(critical), "Critical issue rows"],
     ["High", fmt(high), "High issue rows"],
+    ["Perfect Timeline", fmt(perfectTimelineCount), "No gaps or overlaps"],
+    ["Auto-Correctable", fmt(autoCorrectableCount), "Issues <1s fixable"],
+    ["Needs Regeneration", fmt(needsRegenerationCount), "Issues ≥1s require regen"],
     ["Approved", fmt(approvedTaskCount), "Reviewed as approved"],
     ["Rejected", fmt(rejectedTaskCount), "Reviewed as rejected"],
   ]
@@ -1421,12 +1467,25 @@ function renderSegment(segment, duration, segmentIssues) {
   const highest = issues.sort((a, b) => severityRank(b.severity) - severityRank(a.severity))[0]?.severity || "";
   const tags = issues.slice(0, 2).map((issue) => `<span class="segment-tag ${severityClass(issue.severity)}">${escapeHtml(issueTagName(issue.eval_name))}</span>`).join("");
   const moreTag = issues.length > 2 ? `<span class="segment-tag">+${issues.length - 2}</span>` : "";
+  
+  // Check for advanced timeline analysis issues
+  const hasGapAnalysis = issues.some(issue => issue.eval_name === "segment_gap_analysis_eval");
+  const hasOverlapAnalysis = issues.some(issue => issue.eval_name === "segment_overlap_analysis_eval");
+  const hasVideoEndIssue = issues.some(issue => issue.eval_name === "video_end_consistency_eval");
+  const hasAutoCorrectableIssue = issues.some(issue => issue.auto_correctable === true);
+  const hasRegenerationIssue = issues.some(issue => issue.auto_correctable === false);
+  
   const classes = [
     "segment",
     segment.source,
     issues.length ? "has-issue" : "",
     state.selectedSegmentId === segment.segment_id ? "selected" : "",
-  ].join(" ");
+    hasGapAnalysis ? "has-gap-analysis" : "",
+    hasOverlapAnalysis ? "has-overlap-analysis" : "",
+    hasVideoEndIssue ? "has-video-end-issue" : "",
+    hasAutoCorrectableIssue ? "auto-correctable" : "",
+    hasRegenerationIssue ? "needs-regeneration" : "",
+  ].filter(cls => cls).join(" ");
   const title = `${fmtTime(segment.start_sec)} - ${fmtTime(segment.end_sec)}\\n${segment.caption}`;
   return `
     <div class="${classes}" data-segment-id="${escapeHtml(segment.segment_id)}" title="${escapeHtml(title)}" style="left:${left}%;width:${width}%">
@@ -1696,6 +1755,11 @@ function safeJsonParse(value, fallback = {}) {
   } catch {
     return fallback;
   }
+}
+
+function safeNumber(value, fallback = 0) {
+  const num = Number(value);
+  return isNaN(num) ? fallback : num;
 }
 
 function normalizeSegments(taskId, source, annotation) {

@@ -382,7 +382,7 @@ button:hover {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(8, minmax(120px, 1fr));
+  grid-template-columns: repeat(11, minmax(110px, 1fr));
   gap: 12px;
   margin-bottom: 22px;
 }
@@ -681,6 +681,27 @@ textarea:focus {
 .segment.has-issue {
   outline: 2px solid var(--high);
   outline-offset: -2px;
+}
+
+/* Advanced timeline analysis visual indicators */
+.segment.has-gap-analysis {
+  border-bottom: 2px solid #f39c12;
+}
+
+.segment.has-overlap-analysis {
+  border-bottom: 2px solid #e74c3c;
+}
+
+.segment.has-video-end-issue {
+  border-bottom: 2px solid #9b59b6;
+}
+
+.segment.auto-correctable {
+  background: linear-gradient(to right, var(--segment-bg), #d5f4e6);
+}
+
+.segment.needs-regeneration {
+  background: linear-gradient(to right, var(--segment-bg), #ffeaa7);
 }
 
 .segment.selected {
