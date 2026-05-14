@@ -493,6 +493,7 @@ async function init() {
   loadDecisions();
   loadCurrentVersion();
   applyStrictMissingHandEval();
+  applyAdvancedTimelineEvals(); // NEW: Apply advanced timeline analysis
   state.selectedTaskId = [...tasks].sort((a, b) => b.risk_score - a.risk_score)[0]?.task_id || null;
 
   hydrateFilters();
@@ -1799,6 +1800,10 @@ function recalculateTaskIssueCounts(taskIds = null) {
     task.eval_names = [...new Set(taskIssues.map((issue) => issue.eval_name))];
     task.max_severity_rank = Math.max(0, ...taskIssues.map((issue) => severityRank(issue.severity)));
     task.risk_score = task.critical_count * 100 + task.high_count * 40 + task.medium_count * 10 + task.low_count * 2;
+    
+    // Initialize advanced timeline metrics if not already set
+    if (task.auto_correctable_count === undefined) task.auto_correctable_count = 0;
+    if (task.needs_regeneration_count === undefined) task.needs_regeneration_count = 0;
   }
 }
 
@@ -1812,6 +1817,39 @@ function applyStrictMissingHandEval(taskIds = null) {
     .map(strictMissingHandIssueForSegment)
     .filter(Boolean);
   state.issues.push(...newIssues);
+  recalculateTaskIssueCounts(targetIds);
+}
+
+function applyAdvancedTimelineEvals(taskIds = null) {
+  const targetIds = taskIds || new Set(state.tasks.map((task) => task.task_id));
+  
+  // Remove existing advanced timeline issues for target tasks
+  const advancedEvals = ["segment_gap_analysis_eval", "segment_overlap_analysis_eval", "video_end_consistency_eval"];
+  state.issues = state.issues.filter((issue) => (
+    !advancedEvals.includes(issue.eval_name) || !targetIds.has(issue.task_id)
+  ));
+
+  // Apply new evaluations
+  const allNewIssues = [];
+  for (const task of state.tasks) {
+    if (!targetIds.has(task.task_id)) continue;
+    
+    const taskFinalSegments = state.finalSegments.filter(seg => seg.task_id === task.task_id);
+    
+    // Apply the 3 new evaluation functions
+    const gapIssues = segmentGapAnalysisEval(task, taskFinalSegments);
+    const overlapData = segmentOverlapAnalysisEval(task, taskFinalSegments);
+    const videoEndIssues = videoEndConsistencyEval(task, taskFinalSegments);
+    
+    allNewIssues.push(...gapIssues, ...overlapData.issues, ...videoEndIssues);
+    
+    // Add auto-correction metrics to task
+    const timelineIssues = [...gapIssues, ...overlapData.issues, ...videoEndIssues];
+    task.auto_correctable_count = safeNumber(timelineIssues.filter(issue => issue.auto_correctable).length);
+    task.needs_regeneration_count = safeNumber(timelineIssues.filter(issue => !issue.auto_correctable).length);
+  }
+  
+  state.issues.push(...allNewIssues);
   recalculateTaskIssueCounts(targetIds);
 }
 
