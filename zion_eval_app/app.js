@@ -2116,6 +2116,8 @@ function loadNewTasksIntoDashboard() {
     evaluation_loaded_at: new Date().toISOString(),
   };
   state.selectedTaskId = data.tasks[0].task_id;
+  applyStrictMissingHandEval(taskIds); // Apply hand annotations eval to new tasks
+  applyAdvancedTimelineEvals(taskIds); // Apply advanced timeline analysis to new tasks
   hydrateDynamicFilters();
   renderAll();
   $("csvLoaderSummary").innerHTML += ` <strong>${fmt(data.tasks.length, 0)}</strong> new tasks loaded into the dashboard.`;
