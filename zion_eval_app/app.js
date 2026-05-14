@@ -133,6 +133,28 @@ const EVAL_INFO = [
     why: "If both fields are expected to align, drift can indicate inconsistent final data.",
     limitation: "In this export, `visual_evidence` may be redundant or intentionally different.",
   },
+  // NEW ADVANCED TIMELINE ANALYSIS EVALUATIONS
+  {
+    name: "segment_gap_analysis_eval",
+    severity: "high/medium/low",
+    checks: "Temporal gaps between consecutive segments, classified by duration (<1s correctable vs ≥1s requires regeneration).",
+    why: "Gaps may indicate missing actions or timing issues that need correction or regeneration.",
+    limitation: "Only detects timing gaps; cannot determine if gap represents missing content or valid pause.",
+  },
+  {
+    name: "segment_overlap_analysis_eval", 
+    severity: "critical/high/medium",
+    checks: "Enhanced overlap detection with duration classification and correction suggestions (<1s auto-correctable vs ≥1s problematic).",
+    why: "Different overlap severities require different correction strategies - small overlaps can be auto-corrected, large ones need regeneration.",
+    limitation: "Duration-based classification may not account for action complexity within overlapped time.",
+  },
+  {
+    name: "video_end_consistency_eval",
+    severity: "critical/medium/low", 
+    checks: "Validates that final segment ends exactly at video duration, with classification by mismatch severity.",
+    why: "Timeline must match video bounds exactly - small mismatches can be auto-corrected, large ones indicate structural problems.",
+    limitation: "Only checks temporal alignment, not whether final action actually completes at video end.",
+  },
 ];
 
 function $(id) {
@@ -2069,6 +2091,179 @@ function exportFilteredCsv() {
     decisions: Object.fromEntries(Object.entries(state.decisions).filter(([taskId]) => taskIds.has(taskId))),
   };
   downloadFile("zion_filtered_bundle.json", JSON.stringify(bundle, null, 2), "application/json;charset=utf-8");
+}
+
+// ============================================================================
+// NEW ADVANCED TIMELINE ANALYSIS FUNCTIONS
+// ============================================================================
+
+function segmentGapAnalysisEval(task, finalSegments) {
+  const issues = [];
+  const valid = finalSegments
+    .filter((segment) => segment.start_sec !== null && segment.end_sec !== null && segment.end_sec > segment.start_sec)
+    .sort((a, b) => a.start_sec - b.start_sec || a.end_sec - b.end_sec);
+  
+  let cursor = null;
+  for (const segment of valid) {
+    if (cursor && segment.start_sec > cursor.end_sec) {
+      const gap = segment.start_sec - cursor.end_sec;
+      if (gap > 0.1) { // Gaps larger than 100ms
+        let severity, message, action;
+        
+        if (gap < 1.0) {
+          severity = "low";
+          message = "Small gap detected - auto-correctable";
+          action = "Gap can be auto-corrected by extending previous segment or adjusting next segment start.";
+        } else if (gap < 3.0) {
+          severity = "medium"; 
+          message = "Medium gap detected - requires review";
+          action = "Review gap to determine if missing content or valid pause. Consider regeneration if action missing.";
+        } else {
+          severity = "high";
+          message = "Large gap detected - likely missing content";
+          action = "Significant gap suggests missing action phase. Regenerate segments for this time range.";
+        }
+
+        issues.push({
+          issue_id: `GAP-ANALYSIS-${task.task_id}-${cursor.array_index}-${segment.array_index}`,
+          task_id: task.task_id,
+          segment_id: segment.segment_id,
+          source: "final",
+          eval_name: "segment_gap_analysis_eval",
+          severity,
+          message,
+          evidence: `${fmt(gap, 3)}s gap between segments ${cursor.array_index} and ${segment.array_index} (${fmtTime(cursor.end_sec)} - ${fmtTime(segment.start_sec)})`,
+          start_sec: cursor.end_sec,
+          end_sec: segment.start_sec,
+          suggested_action: action,
+          gap_duration: safeNumber(gap),
+          auto_correctable: safeNumber(gap) < 1.0,
+        });
+      }
+    }
+    if (!cursor || segment.end_sec > cursor.end_sec) cursor = segment;
+  }
+  return issues;
+}
+
+function segmentOverlapAnalysisEval(task, finalSegments) {
+  const issues = [];
+  const overlaps = [];
+  const valid = finalSegments
+    .filter((segment) => segment.start_sec !== null && segment.end_sec !== null && segment.end_sec > segment.start_sec)
+    .sort((a, b) => a.start_sec - b.start_sec || a.end_sec - b.end_sec);
+
+  for (let i = 0; i < valid.length - 1; i++) {
+    for (let j = i + 1; j < valid.length; j++) {
+      const segA = valid[i];
+      const segB = valid[j];
+      const start = Math.max(segA.start_sec, segB.start_sec);
+      const end = Math.min(segA.end_sec, segB.end_sec);
+      const overlapDuration = end - start;
+      
+      if (overlapDuration > 0.05) { // Detect overlaps larger than 50ms
+        let severity, message, action;
+        
+        if (overlapDuration < 1.0) {
+          severity = "medium";
+          message = "Small overlap detected - auto-correctable"; 
+          action = "Overlap can be auto-corrected by proportional compression or boundary adjustment.";
+        } else if (overlapDuration < 2.0) {
+          severity = "high";
+          message = "Medium overlap detected - requires review";
+          action = "Significant overlap requires manual review to determine which segment boundaries to adjust.";
+        } else {
+          severity = "critical";
+          message = "Large overlap detected - major timing conflict";
+          action = "Major overlap indicates structural timeline problem. Regenerate affected segments.";
+        }
+
+        const overlap = {
+          task_id: task.task_id,
+          segment_a_id: segA.segment_id,
+          segment_b_id: segB.segment_id,
+          overlap_start_sec: start,
+          overlap_end_sec: end,
+          overlap_duration_sec: overlapDuration,
+          segment_a_caption: segA.caption,
+          segment_b_caption: segB.caption,
+          severity,
+          auto_correctable: overlapDuration < 1.0,
+        };
+        overlaps.push(overlap);
+        
+        issues.push({
+          issue_id: `OVERLAP-ANALYSIS-${task.task_id}-${i}-${j}`,
+          task_id: task.task_id,
+          segment_id: segB.segment_id,
+          source: "final",
+          eval_name: "segment_overlap_analysis_eval",
+          severity,
+          message,
+          evidence: `${fmt(overlapDuration, 3)}s overlap between segments ${segA.array_index} and ${segB.array_index} (${fmtTime(start)} - ${fmtTime(end)})`,
+          start_sec: start,
+          end_sec: end,
+          suggested_action: action,
+          overlap_duration: safeNumber(overlapDuration),
+          auto_correctable: safeNumber(overlapDuration) < 1.0,
+        });
+      }
+    }
+  }
+  return { issues, overlaps };
+}
+
+function videoEndConsistencyEval(task, finalSegments) {
+  const issues = [];
+  const videoDuration = Number(task.final_duration_secs || task.actual_video_duration || 0) || 0;
+  
+  if (videoDuration <= 0) return issues; // Can't evaluate without video duration
+
+  const valid = finalSegments
+    .filter((segment) => segment.start_sec !== null && segment.end_sec !== null && segment.end_sec > segment.start_sec)
+    .sort((a, b) => b.end_sec - a.end_sec); // Sort by end time, latest first
+    
+  if (!valid.length) return issues;
+  
+  const lastSegment = valid[0]; // Segment that ends latest
+  const endDifference = Math.abs(lastSegment.end_sec - videoDuration);
+  
+  if (endDifference > 0.05) { // Detect differences larger than 50ms
+    let severity, message, action;
+    
+    if (endDifference < 1.0) {
+      severity = "low";
+      message = "Minor video end mismatch - auto-correctable";
+      action = "Adjust final segment end time to match video duration exactly.";
+    } else if (endDifference < 3.0) {
+      severity = "medium"; 
+      message = "Moderate video end mismatch - requires review";
+      action = "Review final segment timing. May need to extend, trim, or add missing final action.";
+    } else {
+      severity = "critical";
+      message = "Major video end mismatch - structural problem";
+      action = "Significant mismatch suggests missing or incorrect final segments. Regenerate end timeline.";
+    }
+
+    issues.push({
+      issue_id: `VIDEO-END-${task.task_id}-${lastSegment.segment_id}`,
+      task_id: task.task_id,
+      segment_id: lastSegment.segment_id,
+      source: "final",
+      eval_name: "video_end_consistency_eval",
+      severity,
+      message,
+      evidence: `Final segment ends at ${fmtTime(lastSegment.end_sec)} but video duration is ${fmtTime(videoDuration)} (${fmt(endDifference, 3)}s difference)`,
+      start_sec: lastSegment.end_sec,
+      end_sec: videoDuration,
+      suggested_action: action,
+      end_difference: safeNumber(endDifference),
+      auto_correctable: safeNumber(endDifference) < 1.0,
+      segment_too_short: lastSegment.end_sec < videoDuration,
+    });
+  }
+  
+  return issues;
 }
 
 init().catch((error) => {
