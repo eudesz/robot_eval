@@ -844,6 +844,21 @@ function issuesForTask(taskId) {
   return state.issues.filter((issue) => issue.task_id === taskId);
 }
 
+/** Final-annotation caption for CSV flags export (always from `final` timeline when possible). */
+function finalAnnotationCaptionForTaskSegment(taskId, segmentId) {
+  if (!segmentId) return "";
+  const finalSeg = state.finalSegments.find((s) => s.task_id === taskId && s.segment_id === segmentId);
+  if (finalSeg) return String(finalSeg.caption || "").trim();
+  const origSeg = state.originalSegments.find((s) => s.task_id === taskId && s.segment_id === segmentId);
+  if (origSeg && origSeg.array_index != null) {
+    const aligned = state.finalSegments.find(
+      (s) => s.task_id === taskId && s.source === "final" && s.array_index === origSeg.array_index
+    );
+    if (aligned) return String(aligned.caption || "").trim();
+  }
+  return "";
+}
+
 function overlapsForTask(taskId) {
   return state.overlaps.filter((overlap) => overlap.task_id === taskId);
 }
@@ -1076,6 +1091,7 @@ function buildReviewExportRows(status, tasks = filteredTasks()) {
           ...base,
           issue_id: "",
           segment_id: "",
+          final_annotation_caption: "",
           eval_name: "",
           severity: "",
           issue_message: "",
@@ -1089,6 +1105,7 @@ function buildReviewExportRows(status, tasks = filteredTasks()) {
         ...base,
         issue_id: issue.issue_id,
         segment_id: issue.segment_id,
+        final_annotation_caption: finalAnnotationCaptionForTaskSegment(task.task_id, issue.segment_id),
         eval_name: issue.eval_name,
         severity: issue.severity,
         issue_message: issue.message,
@@ -1134,6 +1151,7 @@ function buildTasksWithFlagsExportRows(tasks = filteredTasks()) {
         ...base,
         issue_id: "",
         segment_id: "",
+        final_annotation_caption: "",
         source: "",
         eval_name: "",
         severity: "",
@@ -1148,6 +1166,7 @@ function buildTasksWithFlagsExportRows(tasks = filteredTasks()) {
       ...base,
       issue_id: issue.issue_id,
       segment_id: issue.segment_id,
+      final_annotation_caption: finalAnnotationCaptionForTaskSegment(task.task_id, issue.segment_id),
       source: issue.source,
       eval_name: issue.eval_name,
       severity: issue.severity,
@@ -1187,6 +1206,7 @@ function exportTasksWithFlags(tasks = filteredTasks()) {
     "reviewed_at",
     "issue_id",
     "segment_id",
+    "final_annotation_caption",
     "source",
     "eval_name",
     "severity",
@@ -1219,6 +1239,7 @@ function exportReviewedTasks(status, tasks = filteredTasks()) {
     "group_cover_count",
     "issue_id",
     "segment_id",
+    "final_annotation_caption",
     "eval_name",
     "severity",
     "issue_message",
