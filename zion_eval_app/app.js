@@ -116,6 +116,13 @@ const EVAL_INFO = [
     limitation: "This is text-only and strict; some true one-hand actions may still be valid after video review.",
   },
   {
+    name: "hand_mention_eval",
+    severity: "low",
+    checks: "Uses `left hands` or `right hands` alone instead of `left hand` / `right hand` (exempts coordinated phrases like `right and left hands` or `Both the right and the left hands`).",
+    why: "Participation is described, but isolated plural after left/right is nonstandard for Zion.",
+    limitation: "Does not judge whether the described actions match the video.",
+  },
+  {
     name: "segment_granularity_eval",
     severity: "high/low",
     checks: "Very long or very short final segments.",
@@ -1821,12 +1828,40 @@ function strictMissingHandIssueForSegment(segment) {
   if (String(segment.caption || "").trim().toLowerCase() === "no caption") return null;
   const text = ` ${segment.caption || ""} ${segment.visual_evidence || ""} `.toLowerCase();
   const hasExplicitBothHands = /\bboth\s+hands?\b|\btwo\s+hands?\b/.test(text);
-  const hasLeft = /\bleft\s+hand\b/.test(text);
-  const hasRight = /\bright\s+hand\b/.test(text);
+  const hasLeftCanonical = /\bleft\s+hand\b/.test(text);
+  const hasRightCanonical = /\bright\s+hand\b/.test(text);
+  const hasLeftPlural = /\bleft\s+hands\b/.test(text);
+  const hasRightPlural = /\bright\s+hands\b/.test(text);
   const hasSimpleBoth = /\bboth\b/.test(text);
   const hasGenericHands = /\bhands?\b/.test(text);
-  if (hasExplicitBothHands || (hasLeft && hasRight)) return null;
-  
+  // "right and left hands", "Both the right and the left hands", etc. — coordinated both sides; valid before isolated `left hands` / `right hands` checks.
+  const hasCoordinatedBothSidesHandsPhrase =
+    /\bright\s+and\s+(?:the\s+)?left\s+hands?\b/.test(text) ||
+    /\bleft\s+and\s+(?:the\s+)?right\s+hands?\b/.test(text) ||
+    /\bboth\s+(?:the\s+)?right\s+and\s+(?:the\s+)?left\s+hands?\b/.test(text) ||
+    /\bboth\s+(?:the\s+)?left\s+and\s+(?:the\s+)?right\s+hands?\b/.test(text);
+  if (hasExplicitBothHands || (hasLeftCanonical && hasRightCanonical) || hasCoordinatedBothSidesHandsPhrase) return null;
+
+  if (hasLeftPlural || hasRightPlural) {
+    const found = [hasLeftPlural && "`left hands`", hasRightPlural && "`right hands`"].filter(Boolean).join(" and ");
+    return {
+      issue_id: `HAND-MENTION-${segment.segment_id}`,
+      task_id: segment.task_id,
+      segment_id: segment.segment_id,
+      source: "final",
+      eval_name: "hand_mention_eval",
+      severity: "low",
+      message: "Hand mention uses noncanonical plural (left/right + hands)",
+      evidence: `Found ${found}. Zion uses singular \`left hand\` and \`right hand\` for each side when spelling out hands.`,
+      start_sec: segment.start_sec,
+      end_sec: segment.end_sec,
+      suggested_action: "Replace `left hands` → `left hand` and `right hands` → `right hand` where each side is meant.",
+    };
+  }
+
+  const hasLeft = hasLeftCanonical;
+  const hasRight = hasRightCanonical;
+
   // Check for "both" without explicit left/right hands - flag as low severity warning
   if (hasSimpleBoth && !hasExplicitBothHands && !hasLeft && !hasRight) {
     return {
@@ -1894,9 +1929,10 @@ function recalculateTaskIssueCounts(taskIds = null) {
 
 function applyStrictMissingHandEval(taskIds = null) {
   const targetIds = taskIds || new Set(state.tasks.map((task) => task.task_id));
-  state.issues = state.issues.filter((issue) => (
-    issue.eval_name !== "missing_hand_annotations_eval" || !targetIds.has(issue.task_id)
-  ));
+  const handCaptionEvalNames = ["missing_hand_annotations_eval", "hand_mention_eval"];
+  state.issues = state.issues.filter(
+    (issue) => !handCaptionEvalNames.includes(issue.eval_name) || !targetIds.has(issue.task_id)
+  );
   const newIssues = state.finalSegments
     .filter((segment) => targetIds.has(segment.task_id))
     .map(strictMissingHandIssueForSegment)

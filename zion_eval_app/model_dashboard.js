@@ -106,6 +106,13 @@ const EVAL_INFO = [
     limitation: "Without video this is only a possible issue, because both hands may not actually be visible.",
   },
   {
+    name: "hand_mention_eval",
+    severity: "low",
+    checks: "Uses `left hands` or `right hands` alone instead of `left hand` / `right hand` (exempts coordinated phrases like `right and left hands` or `Both the right and the left hands`).",
+    why: "Participation is described, but isolated plural after left/right is nonstandard for Zion.",
+    limitation: "Does not judge whether the described actions match the video.",
+  },
+  {
     name: "segment_granularity_eval",
     severity: "high/low",
     checks: "Very long or very short final segments.",
