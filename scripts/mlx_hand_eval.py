@@ -21,6 +21,7 @@ Mark `mentions_both_hands_semantically` true when the text reasonably communicat
 - Nonstandard plural sides ("left hands", "right hands") are grammar/style errors, but for this semantic eval they still count as the left/right hand side.
 - Clear shorthand is allowed only when the omitted word is clearly "hand" in the same local clause, e.g. "the right hand holds the cup while the left steadies it" means right hand + left hand.
 - Generic plural/both wording: "hands", "both hands", "with both hands", "each hand", "the left and right hands".
+- Obvious typo "borh hands" should be treated as "both hands".
 - Bare "both" can PASS only when the nearest local subject is clearly hands, e.g. "both close the lid" after "the hands" or "left/right hands" have just been introduced in the same phase.
 - Idle/resting hands count as accounted for when explicitly tied to a side, e.g. "the right hand works while the left hand is idle" or "the left remains idle" after a hand context.
 - One phrase or several clauses inside the same phase may establish the meaning. If the local context clearly points to both hands doing the same action, PASS even without separate left/right details.

@@ -15,6 +15,24 @@ Primary input is the CSV export containing `final_annotations`. The app parses:
 
 All caption-language checks assume English captions.
 
+## Segment Normalization
+
+The app normalizes mixed `phase_captions` shapes before running deterministic evals, MLX evals, UI rendering, and CSV exports.
+
+Normalized segment text:
+
+- `caption = segment.caption || segment.description || ""`
+- `phase_index = segment.phase_index ?? segment.idx ?? array position`
+- `hand_metadata = segment.hand || ""`
+
+`hand_metadata` is preserved for debugging/context but does not replace textual hand evidence. Evals should still rely on normalized text from `caption`/`description` and `visual_evidence`.
+
+The exported `final_annotation_caption` uses the normalized caption text, so segments that only provide `description` are not exported as blank captions.
+
+Known typo handling:
+
+- `borh hands` is treated as `both hands` for missing-hand checks.
+
 ## Output Concepts
 
 Each deterministic flag becomes one issue row with:
@@ -40,6 +58,16 @@ MLX results are exported as task-level columns:
 - `mlx_mentions_both_hands_all_phases`
 - `mlx_false_evidence`
 - `mlx_error`
+
+The app also exposes an `Issue Report Summary CSV` export and an equivalent dashboard view. This report is built from the active task filters and has the following columns:
+
+- `section`
+- `metric`
+- `eval_name`
+- `severity`
+- `count`
+- `percent_of_flags`
+- `description`
 
 ## Deterministic Evals
 
@@ -276,6 +304,49 @@ Rule:
 Severity:
 
 - `critical` / `medium` / `low`.
+
+## Issue Report Summary
+
+The Issue Report Summary is available in the dashboard and as `Issue Report Summary CSV`.
+
+It is always computed from the currently filtered task set, so counts and percentages reflect the active sidebar filters.
+
+### Report Columns
+
+- `section`: report section name.
+- `metric`: human-readable metric label.
+- `eval_name`: eval associated with the row when applicable.
+- `severity`: severity or severity set for the row.
+- `count`: number of matching flags/tasks.
+- `percent_of_flags`: percentage of the relevant flag total.
+- `description`: short explanation of what the metric detects.
+
+### Sections
+
+- `Summary`
+  - `Total CSV tasks`: total number of tasks loaded in the current dashboard dataset.
+  - `Filtered tasks`: number of tasks in the active filter.
+  - `Total flags`: total issue rows in the active filter.
+- `Severity Breakdown`
+  - `critical flags`
+  - `high flags`
+  - `medium flags`
+  - `low flags`
+- `Gap Buckets`
+  - `Micro Gaps`: `< 1s`
+  - `Minor Gaps`: `1s to < 3s`
+  - `Major Gaps`: `3s to < 8s`
+  - `Critical Gaps`: `>= 8s`
+- `Overlap Buckets`
+  - `Micro Overlaps`: `< 1s`
+  - `Minor Overlaps`: `1s to < 3s`
+  - `Major Overlaps`: `3s to < 8s`
+  - `Critical Overlaps`: `>= 8s`
+- `Issue Breakdown`
+  - One row per `eval_name`.
+  - Count is the number of flags for that eval.
+  - Percentage is relative to all flags in the active filter.
+  - Description comes from the eval specification in the app.
 
 ## MLX LLM Eval: Both-Hands Semantic Check
 

@@ -683,6 +683,8 @@ function finalAnnotationObjectForTask(taskId) {
       start: s.start || "",
       end: s.end || "",
       caption: s.caption || "",
+      description: s.description || "",
+      hand: s.hand_metadata || "",
       visual_evidence: s.visual_evidence || "",
     })),
   };
@@ -1102,13 +1104,13 @@ function issuesForTask(taskId) {
 function finalAnnotationCaptionForTaskSegment(taskId, segmentId) {
   if (!segmentId) return "";
   const finalSeg = state.finalSegments.find((s) => s.task_id === taskId && s.segment_id === segmentId);
-  if (finalSeg) return String(finalSeg.caption || "").trim();
+  if (finalSeg) return String(finalSeg.caption || finalSeg.description || "").trim();
   const origSeg = state.originalSegments.find((s) => s.task_id === taskId && s.segment_id === segmentId);
   if (origSeg && origSeg.array_index != null) {
     const aligned = state.finalSegments.find(
       (s) => s.task_id === taskId && s.source === "final" && s.array_index === origSeg.array_index
     );
-    if (aligned) return String(aligned.caption || "").trim();
+    if (aligned) return String(aligned.caption || aligned.description || "").trim();
   }
   return "";
 }
@@ -1734,9 +1736,38 @@ function reportBucketDescription(kind, bucket) {
   return `${bucket} ${kind.toLowerCase()} by duration bucket (${ranges[bucket]}).`;
 }
 
-function buildIssueReportRows(tasks = filteredTasks()) {
+function reportIssuesForTasks(tasks) {
   const taskIds = new Set(tasks.map((task) => task.task_id));
-  const issues = state.issues.filter((issue) => taskIds.has(issue.task_id));
+  const issues = state.issues.filter(
+    (issue) => taskIds.has(issue.task_id) && issue.eval_name !== MISSING_HAND_ANNOTATIONS_EVAL,
+  );
+  const finalMissingHandIssues = tasks
+    .map((task) => {
+      const finalFields = finalMissingHandFieldsForTask(task.task_id);
+      if (finalFields.final_missing_hand_flag !== "true") return null;
+      const deterministicIssues = deterministicMissingHandIssuesForTask(task.task_id);
+      const severity =
+        deterministicIssues
+          .map((issue) => issue.severity)
+          .sort((a, b) => severityRank(b) - severityRank(a))[0] || "medium";
+      return {
+        issue_id: `FINAL-MISSING-HAND-${task.task_id}`,
+        task_id: task.task_id,
+        segment_id: finalFields.deterministic_missing_hand_segment_ids,
+        source: finalFields.final_missing_hand_source || "final_missing_hand",
+        eval_name: MISSING_HAND_ANNOTATIONS_EVAL,
+        severity,
+        message: "Final missing-hand flag",
+        evidence: finalFields.final_missing_hand_evidence || finalFields.deterministic_missing_hand_evidence,
+        suggested_action: "Review final hand wording using deterministic candidate and MLX evidence.",
+      };
+    })
+    .filter(Boolean);
+  return [...issues, ...finalMissingHandIssues];
+}
+
+function buildIssueReportRows(tasks = filteredTasks()) {
+  const issues = reportIssuesForTasks(tasks);
   const infoByName = evalInfoByName();
   const totalFlags = issues.length;
   const rows = [];
@@ -1753,6 +1784,7 @@ function buildIssueReportRows(tasks = filteredTasks()) {
     });
   };
 
+  addRow("Summary", "Total CSV tasks", state.tasks.length, "Total number of tasks loaded from the current CSV/dashboard dataset.", "", "", 0);
   addRow("Summary", "Filtered tasks", tasks.length, "Number of tasks included in the active filter.", "", "", 0);
   addRow("Summary", "Total flags", totalFlags, "Total issue rows detected in the active filter.");
   for (const severity of ["critical", "high", "medium", "low"]) {
@@ -2378,22 +2410,38 @@ function safeNumber(value, fallback = 0) {
   return isNaN(num) ? fallback : num;
 }
 
+function segmentCaptionText(segment) {
+  return String(segment?.caption ?? segment?.description ?? "").trim();
+}
+
+function segmentPhaseIndex(segment, index) {
+  return segment?.phase_index ?? segment?.idx ?? index;
+}
+
+function segmentHandMetadata(segment) {
+  return segment?.hand ? String(segment.hand).trim() : "";
+}
+
 function normalizeSegments(taskId, source, annotation) {
   return (annotation.phase_captions || []).map((segment, index) => {
     const startSec = parseTimeToSeconds(segment.start);
     const endSec = parseTimeToSeconds(segment.end);
+    const caption = segmentCaptionText(segment);
     return {
       segment_id: `${taskId}:${source}:${index}`,
       task_id: taskId,
       source,
       array_index: index,
-      phase_index: segment.phase_index ?? index,
+      phase_index: segmentPhaseIndex(segment, index),
       start: segment.start ?? "",
       end: segment.end ?? "",
       start_sec: startSec,
       end_sec: endSec,
       duration_sec: startSec !== null && endSec !== null ? Math.max(0, endSec - startSec) : null,
-      caption: segment.caption || "",
+      caption,
+      raw_caption: segment.caption ?? "",
+      description: segment.description ?? "",
+      hand_metadata: segmentHandMetadata(segment),
       visual_evidence: segment.visual_evidence || "",
       covered_markers: segment.covered_markers || [],
       timestamp_start_issue: null,
@@ -2421,6 +2469,7 @@ function strictMissingHandIssueForSegment(segment) {
   const text = ` ${segment.caption || ""} ${segment.visual_evidence || ""} `.toLowerCase();
   const hasExplicitBothHands =
     /\b(?:an)?both\s+hands?\b/.test(text) ||
+    /\bborh\s+hands?\b/.test(text) ||
     /\btwo\s+hands?\b/.test(text) ||
     /\bboth\s+empty\s+hands?\b/.test(text) ||
     /\beach\s+hand\b/.test(text);
