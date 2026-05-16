@@ -1831,11 +1831,32 @@ function strictMissingHandIssueForSegment(segment) {
   // Empty caption + empty evidence: nothing to score for hand wording (avoid false "missing hand").
   if (!capTrim && !veTrim) return null;
   const text = ` ${segment.caption || ""} ${segment.visual_evidence || ""} `.toLowerCase();
-  const hasExplicitBothHands = /\bboth\s+hands?\b|\btwo\s+hands?\b/.test(text);
+  const hasExplicitBothHands =
+    /\b(?:an)?both\s+hands?\b/.test(text) ||
+    /\btwo\s+hands?\b/.test(text) ||
+    /\bboth\s+empty\s+hands?\b/.test(text) ||
+    /\beach\s+hand\b/.test(text);
   // "Both the hands ..." states both sides participate; not the same as bare "both" without hand wording.
   const hasBothTheHandsPhrase = /\bboth\s+the\s+hands?\b/.test(text);
+  // "Both picks up ..." — "Both" as subject (both hands implied) + verb; exclude "both the …", "both sides", etc.
+  const bothSubjectVerbAtStart = (s) =>
+    /^both\s+(?!the\b)(?!sides\b)(?!ends?\b)(?!pieces\b)(?!items?\b)(?!hands?\b)/i.test(String(s).trim());
+  const hasBothAsSubjectVerbPhrase = bothSubjectVerbAtStart(capTrim) || bothSubjectVerbAtStart(veTrim);
   const hasLeftCanonical = /\bleft\s+hand\b/.test(text);
   const hasRightCanonical = /\bright\s+hand\b/.test(text);
+  const hasLeftMention =
+    hasLeftCanonical ||
+    /\bleft-hand\b/.test(text) ||
+    /\blefthand\b/.test(text) ||
+    /\bleftt\s+hand\b/.test(text) ||
+    /\b(?:la\s+)?mano\s+izquierda\b/.test(text);
+  const hasRightMention =
+    hasRightCanonical ||
+    /\bright-hand\b/.test(text) ||
+    /\brighthand\b/.test(text) ||
+    /\blright\s+hand\b/.test(text) ||
+    /\brileft\s+hand\b/.test(text) ||
+    /\b(?:la\s+)?mano\s+derecha\b/.test(text);
   const hasLeftPlural = /\bleft\s+hands\b/.test(text);
   const hasRightPlural = /\bright\s+hands\b/.test(text);
   const hasSimpleBoth = /\bboth\b/.test(text);
@@ -1846,7 +1867,15 @@ function strictMissingHandIssueForSegment(segment) {
     /\bleft\s+and\s+(?:the\s+)?right\s+hands?\b/.test(text) ||
     /\bboth\s+(?:the\s+)?right\s+and\s+(?:the\s+)?left\s+hands?\b/.test(text) ||
     /\bboth\s+(?:the\s+)?left\s+and\s+(?:the\s+)?right\s+hands?\b/.test(text);
-  if (hasExplicitBothHands || hasBothTheHandsPhrase || (hasLeftCanonical && hasRightCanonical) || hasCoordinatedBothSidesHandsPhrase) return null;
+  if (
+    hasExplicitBothHands ||
+    hasBothTheHandsPhrase ||
+    hasBothAsSubjectVerbPhrase ||
+    (hasLeftMention && hasRightMention) ||
+    hasCoordinatedBothSidesHandsPhrase
+  ) {
+    return null;
+  }
 
   if (hasLeftPlural || hasRightPlural) {
     const found = [hasLeftPlural && "`left hands`", hasRightPlural && "`right hands`"].filter(Boolean).join(" and ");
@@ -1865,8 +1894,8 @@ function strictMissingHandIssueForSegment(segment) {
     };
   }
 
-  const hasLeft = hasLeftCanonical;
-  const hasRight = hasRightCanonical;
+  const hasLeft = hasLeftMention;
+  const hasRight = hasRightMention;
 
   // Check for "both" without explicit left/right hands - flag as low severity warning
   if (hasSimpleBoth && !hasExplicitBothHands && !hasLeft && !hasRight) {
