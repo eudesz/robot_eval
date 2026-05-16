@@ -1825,9 +1825,15 @@ function issueSeverityCounts(taskIssues) {
 
 function strictMissingHandIssueForSegment(segment) {
   if (segment.source !== "final") return null;
-  if (String(segment.caption || "").trim().toLowerCase() === "no caption") return null;
+  const capTrim = String(segment.caption || "").trim();
+  const veTrim = String(segment.visual_evidence || "").trim();
+  if (capTrim.toLowerCase() === "no caption") return null;
+  // Empty caption + empty evidence: nothing to score for hand wording (avoid false "missing hand").
+  if (!capTrim && !veTrim) return null;
   const text = ` ${segment.caption || ""} ${segment.visual_evidence || ""} `.toLowerCase();
   const hasExplicitBothHands = /\bboth\s+hands?\b|\btwo\s+hands?\b/.test(text);
+  // "Both the hands ..." states both sides participate; not the same as bare "both" without hand wording.
+  const hasBothTheHandsPhrase = /\bboth\s+the\s+hands?\b/.test(text);
   const hasLeftCanonical = /\bleft\s+hand\b/.test(text);
   const hasRightCanonical = /\bright\s+hand\b/.test(text);
   const hasLeftPlural = /\bleft\s+hands\b/.test(text);
@@ -1840,7 +1846,7 @@ function strictMissingHandIssueForSegment(segment) {
     /\bleft\s+and\s+(?:the\s+)?right\s+hands?\b/.test(text) ||
     /\bboth\s+(?:the\s+)?right\s+and\s+(?:the\s+)?left\s+hands?\b/.test(text) ||
     /\bboth\s+(?:the\s+)?left\s+and\s+(?:the\s+)?right\s+hands?\b/.test(text);
-  if (hasExplicitBothHands || (hasLeftCanonical && hasRightCanonical) || hasCoordinatedBothSidesHandsPhrase) return null;
+  if (hasExplicitBothHands || hasBothTheHandsPhrase || (hasLeftCanonical && hasRightCanonical) || hasCoordinatedBothSidesHandsPhrase) return null;
 
   if (hasLeftPlural || hasRightPlural) {
     const found = [hasLeftPlural && "`left hands`", hasRightPlural && "`right hands`"].filter(Boolean).join(" and ");
