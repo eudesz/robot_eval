@@ -120,42 +120,50 @@
             <h2 id="selectedTitle">Loading...</h2>
             <p id="selectedSubtitle">Parsing final annotation data.</p>
           </div>
-          <div class="actions">
-            <select id="exportTypeSelect" aria-label="Export type">
-              <option value="tasks_csv">Filtered Tasks CSV</option>
+          <div class="hero-actions-col">
+            <div class="actions">
+              <select id="exportTypeSelect" aria-label="Export type">
+                <option value="tasks_csv">Filtered Tasks CSV</option>
               <option value="tasks_with_flags_csv">Filtered Tasks + Flags CSV</option>
+              <option value="issue_report_summary_csv">Issue Report Summary CSV</option>
+              <option value="mlx_hand_summary_csv">MLX Hand Mention Summary CSV</option>
               <option value="sidebar_tasks_csv">Sidebar Filtered Tasks CSV</option>
-              <option value="issues_csv">Filtered Issues CSV</option>
-              <option value="overlaps_csv">Filtered Overlaps CSV</option>
-              <option value="group_covers_csv">Filtered Group Covers CSV</option>
-              <option value="approved_tasks_csv">Approved Tasks CSV</option>
-              <option value="rejected_tasks_flags_csv">Rejected Tasks + Flags CSV</option>
-              <option value="bundle_json">Filtered Bundle JSON</option>
-            </select>
-            <button id="exportFilteredBtn" type="button">Download Export</button>
-            <button id="resetFiltersBtn" type="button">Reset Filters</button>
+                <option value="issues_csv">Filtered Issues CSV</option>
+                <option value="overlaps_csv">Filtered Overlaps CSV</option>
+                <option value="group_covers_csv">Filtered Group Covers CSV</option>
+                <option value="approved_tasks_csv">Approved Tasks CSV</option>
+                <option value="rejected_tasks_flags_csv">Rejected Tasks + Flags CSV</option>
+                <option value="bundle_json">Filtered Bundle JSON</option>
+              </select>
+              <button id="exportFilteredBtn" type="button">Download Export</button>
+              <button id="resetFiltersBtn" type="button">Reset Filters</button>
+            </div>
+            <div class="mlx-toolbar" title="Requires: python3 scripts/mlx_hand_server.py from the repo root">
+              <label>
+                MLX server
+                <input id="mlxServerUrlInput" type="url" value="http://127.0.0.1:8765" autocomplete="off" />
+              </label>
+              <label>
+                MLX model
+                <input id="mlxModelInput" type="text" value="mlx-community/Llama-3.2-3B-Instruct-4bit" spellcheck="false" />
+              </label>
+              <button id="runMlxHandBtn" type="button">Run MLX hand check (missing hand)</button>
+              <button id="resetMlxHandBtn" type="button">Reset MLX evals</button>
+              <span id="mlxHandRunStatus" class="muted mlx-status"></span>
+            </div>
           </div>
         </section>
 
         <section id="statsGrid" class="stats-grid"></section>
 
-        <section class="review-decision-panel">
+        <section class="issue-report-panel">
           <div class="panel-header">
             <div>
-              <h3>Task Approval</h3>
-              <p>Mark the selected task after reviewing its flags. Decisions are saved locally in this browser and included in exports.</p>
+              <h3>Issue Report Summary</h3>
+              <p>Consistent filtered report with severity counts, gap/overlap buckets, and issue breakdown by eval type.</p>
             </div>
-            <span id="reviewDecisionStatus" class="badge">Not reviewed</span>
           </div>
-          <div class="review-decision-actions">
-            <button id="approveTaskBtn" type="button" class="decision-button approve">Approve Task</button>
-            <button id="rejectTaskBtn" type="button" class="decision-button reject">Reject Task</button>
-            <button id="clearTaskDecisionBtn" type="button" class="small-button">Clear Decision</button>
-          </div>
-          <label>
-            Review notes / rejection reason
-            <textarea id="reviewNotesInput" rows="3" placeholder="Optional notes for the decision or details to send with rejected tasks."></textarea>
-          </label>
+          <div id="issueReportSummary" class="issue-report-summary"></div>
         </section>
 
         <section class="csv-loader-panel">

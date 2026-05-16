@@ -45,6 +45,8 @@ const state = {
     segmentIssueTypes: [],
     zoom: 1,
   },
+  /** @type {Record<string, { ok?: boolean, eval?: object, error?: string }>} */
+  mlxHandByTaskId: {},
 };
 
 const els = {};
@@ -52,13 +54,6 @@ const DECISION_STORAGE_KEY = "zion_eval_task_decisions_v1";
 const VERSION_STORAGE_KEY = "zion_eval_current_version_v1";
 
 const EVAL_INFO = [
-  {
-    name: "segment_overlap_eval",
-    severity: "critical/high",
-    checks: "Final timeline segments that overlap each other in time.",
-    why: "Two final captions should not normally claim the same time window unless the schema explicitly supports parallel actions.",
-    limitation: "Flags internal timeline conflict only; it does not know which segment is visually correct.",
-  },
   {
     name: "segment_group_cover_eval",
     severity: "critical/high",
@@ -116,11 +111,11 @@ const EVAL_INFO = [
     limitation: "This is text-only and strict; some true one-hand actions may still be valid after video review.",
   },
   {
-    name: "hand_mention_eval",
+    name: "caption_grammar_eval",
     severity: "low",
-    checks: "Uses `left hands` or `right hands` alone instead of `left hand` / `right hand` (exempts coordinated phrases like `right and left hands` or `Both the right and the left hands`).",
-    why: "Participation is described, but isolated plural after left/right is nonstandard for Zion.",
-    limitation: "Does not judge whether the described actions match the video.",
+    checks: "Obvious caption grammar/typo issues such as `right handhold`, `left hands`, missing third-person verb agreement (`left hand turn`), or repeated spaces.",
+    why: "Even when hand participation is semantically clear, grammar errors should be easy to find and clean up.",
+    limitation: "Heuristic text check; it intentionally catches only obvious patterns to avoid over-flagging normal caption wording.",
   },
   {
     name: "segment_granularity_eval",
@@ -310,7 +305,7 @@ function setTaskDecision(status) {
   if (!state.selectedTaskId) return;
   state.decisions[state.selectedTaskId] = {
     status,
-    notes: els.reviewNotesInput.value.trim(),
+    notes: els.reviewNotesInput?.value.trim() || "",
     reviewed_at: new Date().toISOString(),
   };
   saveDecisions();
@@ -451,6 +446,11 @@ async function init() {
     els.loadNewTasksBtn,
     els.downloadNewOnlyCsvBtn,
     els.downloadDuplicateCsvBtn,
+    els.mlxServerUrlInput,
+    els.mlxModelInput,
+    els.runMlxHandBtn,
+    els.resetMlxHandBtn,
+    els.mlxHandRunStatus,
   ] = [
     $("searchInput"),
     $("issueTypeToggleBtn"),
@@ -493,6 +493,11 @@ async function init() {
     $("loadNewTasksBtn"),
     $("downloadNewOnlyCsvBtn"),
     $("downloadDuplicateCsvBtn"),
+    $("mlxServerUrlInput"),
+    $("mlxModelInput"),
+    $("runMlxHandBtn"),
+    $("resetMlxHandBtn"),
+    $("mlxHandRunStatus"),
   ];
 
   const [summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments] = await Promise.all([
@@ -508,6 +513,7 @@ async function init() {
   Object.assign(state, { summary, tasks, originalSegments, finalSegments, issues, overlaps, coveringSegments });
   loadDecisions();
   loadCurrentVersion();
+  const mlxRestored = loadMlxHandResults();
   applyStrictMissingHandEval();
   applyAdvancedTimelineEvals(); // NEW: Apply advanced timeline analysis
   state.selectedTaskId = [...tasks].sort((a, b) => b.risk_score - a.risk_score)[0]?.task_id || null;
@@ -516,6 +522,9 @@ async function init() {
   bindEvents();
   renderCurrentVersion();
   renderAll();
+  if (mlxRestored && els.mlxHandRunStatus) {
+    els.mlxHandRunStatus.textContent = `Restored ${fmt(mlxRestored, 0)} MLX results from browser storage.`;
+  }
 }
 
 function hydrateFilters() {
@@ -578,6 +587,223 @@ function renderSegmentIssueTypeSummary() {
     els.segmentIssueTypeSummary.textContent = state.filters.segmentIssueTypes[0];
   } else {
     els.segmentIssueTypeSummary.textContent = `${count} segment issue types`;
+  }
+}
+
+const MLX_HAND_URL_KEY = "zion_mlx_hand_url";
+const MLX_HAND_MODEL_KEY = "zion_mlx_hand_model";
+const MLX_HAND_RESULTS_KEY = "zion_mlx_hand_results_v1";
+const MLX_HAND_BATCH = 1;
+const MLX_FETCH_TIMEOUT_MS = 15 * 60 * 1000;
+let mlxHandRunInProgress = false;
+
+function loadMlxHandResults() {
+  try {
+    const raw = localStorage.getItem(MLX_HAND_RESULTS_KEY);
+    if (!raw) return 0;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      state.mlxHandByTaskId = parsed;
+      return Object.keys(parsed).length;
+    }
+  } catch {
+    /* ignore corrupt storage */
+  }
+  return 0;
+}
+
+function saveMlxHandResults() {
+  try {
+    localStorage.setItem(MLX_HAND_RESULTS_KEY, JSON.stringify(state.mlxHandByTaskId));
+  } catch {
+    /* localStorage quota — results stay in memory until CSV export */
+  }
+}
+
+function mlxHandResultCount() {
+  return Object.keys(state.mlxHandByTaskId).length;
+}
+
+function resetMlxHandResults() {
+  if (mlxHandRunInProgress) {
+    window.alert("MLX is running. Wait for it to finish or reload after stopping the request, then reset.");
+    return;
+  }
+  const count = mlxHandResultCount();
+  if (!count) {
+    if (els.mlxHandRunStatus) els.mlxHandRunStatus.textContent = "No MLX evals to reset.";
+    return;
+  }
+  const ok = window.confirm(`Clear ${count} saved MLX eval results from this browser? You can re-run them after reset.`);
+  if (!ok) return;
+  state.mlxHandByTaskId = {};
+  try {
+    localStorage.removeItem(MLX_HAND_RESULTS_KEY);
+  } catch {
+    /* ignore */
+  }
+  if (els.mlxHandRunStatus) els.mlxHandRunStatus.textContent = `Reset ${fmt(count, 0)} MLX eval results.`;
+  renderAll();
+}
+
+async function mlxFetch(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), MLX_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new Error(
+        "MLX request timed out (15 min). If the server was still downloading the model, restart it and wait for “Model loaded and ready”.",
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function finalAnnotationObjectForTask(taskId) {
+  const task = state.tasks.find((t) => t.task_id === taskId);
+  if (task?.final_annotations_raw?.trim()) {
+    const parsed = safeJsonParse(task.final_annotations_raw, null);
+    if (parsed && Array.isArray(parsed.phase_captions) && parsed.phase_captions.length) return parsed;
+  }
+  const segs = state.finalSegments
+    .filter((s) => s.task_id === taskId)
+    .sort((a, b) => a.array_index - b.array_index);
+  if (!segs.length) return null;
+  return {
+    task_name: task?.task_name,
+    uuid: task?.client_folder_name,
+    duration_secs: task?.final_duration_secs || task?.actual_video_duration,
+    phase_captions: segs.map((s, idx) => ({
+      phase_index: s.phase_index ?? idx,
+      segment_id: s.segment_id || null,
+      start: s.start || "",
+      end: s.end || "",
+      caption: s.caption || "",
+      visual_evidence: s.visual_evidence || "",
+    })),
+  };
+}
+
+const MISSING_HAND_ANNOTATIONS_EVAL = "missing_hand_annotations_eval";
+
+function taskHasMissingHandAnnotationIssue(taskId) {
+  return state.issues.some(
+    (issue) => issue.task_id === taskId && issue.eval_name === MISSING_HAND_ANNOTATIONS_EVAL,
+  );
+}
+
+async function runMlxHandCheckOnFlaggedTasks() {
+  if (!els.runMlxHandBtn || !els.mlxServerUrlInput) return;
+  const base = (els.mlxServerUrlInput?.value || "").trim().replace(/\/$/, "");
+  const model =
+    (els.mlxModelInput?.value || "").trim() || "mlx-community/Llama-3.2-3B-Instruct-4bit";
+  if (!base) {
+    window.alert("Set the MLX server URL (e.g. http://127.0.0.1:8765).");
+    return;
+  }
+  const tasks = filteredTasks().filter((t) => taskHasMissingHandAnnotationIssue(t.task_id));
+  if (!tasks.length) {
+    window.alert(
+      "No tasks with missing_hand_annotations_eval in the current filter. Adjust filters or load tasks with that eval flag.",
+    );
+    return;
+  }
+  const alreadyOk = tasks.filter((t) => state.mlxHandByTaskId[t.task_id]?.ok).length;
+  const pending = tasks.filter((t) => !state.mlxHandByTaskId[t.task_id]?.ok);
+  if (!pending.length) {
+    window.alert(
+      `All ${tasks.length} flagged tasks already have MLX results in this browser (${mlxHandResultCount()} saved). Download CSV or clear site data to re-run.`,
+    );
+    return;
+  }
+  if (alreadyOk > 0) {
+    const cont = window.confirm(
+      `${alreadyOk} tasks already have MLX results in this browser. Continue with the remaining ${pending.length}? (Reloading the page does not stop the MLX server; partial results are saved as it runs.)`,
+    );
+    if (!cont) return;
+  }
+  const setStatus = (msg) => {
+    if (els.mlxHandRunStatus) els.mlxHandRunStatus.textContent = msg;
+  };
+  mlxHandRunInProgress = true;
+  els.runMlxHandBtn.disabled = true;
+  setStatus("MLX: checking server…");
+  try {
+    const h = await mlxFetch(`${base}/health`);
+    if (!h.ok) throw new Error(`health HTTP ${h.status}`);
+    const health = await h.json();
+    if (!health.model_ready) {
+      mlxHandRunInProgress = false;
+      setStatus("");
+      els.runMlxHandBtn.disabled = false;
+      window.alert(
+        `MLX server is up but the model is not loaded yet.\n\nIn the server terminal wait for:\n  Model loaded and ready for requests.\n\nRestart with:\n  python3 scripts/mlx_hand_server.py\n\n(The model is already downloaded; restart should be quick.)`,
+      );
+      return;
+    }
+  } catch {
+    mlxHandRunInProgress = false;
+    setStatus("");
+    els.runMlxHandBtn.disabled = false;
+    window.alert(
+      `Cannot reach MLX server at ${base}.\n\nStart it from the repo root:\n  python3 scripts/mlx_hand_server.py`,
+    );
+    return;
+  }
+  let processed = 0;
+  const total = pending.length;
+  try {
+    for (let i = 0; i < pending.length; i += MLX_HAND_BATCH) {
+      const chunk = pending.slice(i, i + MLX_HAND_BATCH);
+      const payloadTasks = [];
+      for (const task of chunk) {
+        const fa = finalAnnotationObjectForTask(task.task_id);
+        if (!fa || !(fa.phase_captions || []).length) {
+          state.mlxHandByTaskId[task.task_id] = { ok: false, error: "no_final_annotation_payload" };
+        } else {
+          payloadTasks.push({ task_id: task.task_id, final_annotation: fa });
+        }
+      }
+      processed += chunk.length;
+      setStatus(`MLX: ${Math.min(processed, total)}/${total} (may take 1–3 min per task)…`);
+      if (payloadTasks.length) {
+        const res = await mlxFetch(`${base}/mlx-hand-check`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tasks: payloadTasks, model, max_tokens: 512, temp: 0 }),
+        });
+        if (!res.ok) {
+          const t = await res.text();
+          throw new Error(t || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        for (const r of data.results || []) {
+          if (r && r.task_id) state.mlxHandByTaskId[r.task_id] = r;
+        }
+        saveMlxHandResults();
+      }
+    }
+    setStatus(`MLX done (${total} new · ${mlxHandResultCount()} saved in browser).`);
+    try {
+      localStorage.setItem(MLX_HAND_URL_KEY, base);
+      localStorage.setItem(MLX_HAND_MODEL_KEY, model);
+    } catch {
+      /* ignore */
+    }
+    renderAll();
+  } catch (err) {
+    saveMlxHandResults();
+    setStatus(`MLX stopped (${mlxHandResultCount()} saved).`);
+    window.alert(
+      `${err?.message || String(err)}\n\nIf you reloaded the page, that can cancel the request in the browser — the MLX server may still be working. Results saved so far are kept in this browser.`,
+    );
+  } finally {
+    mlxHandRunInProgress = false;
+    els.runMlxHandBtn.disabled = false;
   }
 }
 
@@ -716,19 +942,21 @@ function bindEvents() {
   });
   els.resetFiltersBtn.addEventListener("click", resetFilters);
   els.exportFilteredBtn.addEventListener("click", exportFilteredCsv);
-  els.approveTaskBtn.addEventListener("click", () => setTaskDecision("approved"));
-  els.rejectTaskBtn.addEventListener("click", () => setTaskDecision("rejected"));
-  els.clearTaskDecisionBtn.addEventListener("click", clearTaskDecision);
-  els.reviewNotesInput.addEventListener("change", () => {
-    if (!state.selectedTaskId || !state.decisions[state.selectedTaskId]) return;
-    state.decisions[state.selectedTaskId] = {
-      ...state.decisions[state.selectedTaskId],
-      notes: els.reviewNotesInput.value.trim(),
-      reviewed_at: new Date().toISOString(),
-    };
-    saveDecisions();
-    renderTaskDecision();
-  });
+  if (els.approveTaskBtn) els.approveTaskBtn.addEventListener("click", () => setTaskDecision("approved"));
+  if (els.rejectTaskBtn) els.rejectTaskBtn.addEventListener("click", () => setTaskDecision("rejected"));
+  if (els.clearTaskDecisionBtn) els.clearTaskDecisionBtn.addEventListener("click", clearTaskDecision);
+  if (els.reviewNotesInput) {
+    els.reviewNotesInput.addEventListener("change", () => {
+      if (!state.selectedTaskId || !state.decisions[state.selectedTaskId]) return;
+      state.decisions[state.selectedTaskId] = {
+        ...state.decisions[state.selectedTaskId],
+        notes: els.reviewNotesInput.value.trim(),
+        reviewed_at: new Date().toISOString(),
+      };
+      saveDecisions();
+      renderTaskDecision();
+    });
+  }
   els.toggleEvalInfoBtn.addEventListener("click", () => {
     state.evalInfoCollapsed = !state.evalInfoCollapsed;
     renderEvalInfo();
@@ -740,6 +968,25 @@ function bindEvents() {
   els.loadNewTasksBtn.addEventListener("click", loadNewTasksIntoDashboard);
   els.downloadNewOnlyCsvBtn.addEventListener("click", () => downloadCsvRows("zion_new_tasks_only.csv", state.csvLoader.newOnlyRows));
   els.downloadDuplicateCsvBtn.addEventListener("click", () => downloadCsvRows("zion_duplicate_tasks.csv", state.csvLoader.duplicateRows));
+  if (els.runMlxHandBtn && els.mlxServerUrlInput && els.mlxModelInput) {
+    try {
+      const savedUrl = localStorage.getItem(MLX_HAND_URL_KEY);
+      if (savedUrl) els.mlxServerUrlInput.value = savedUrl;
+      const savedModel = localStorage.getItem(MLX_HAND_MODEL_KEY);
+      if (savedModel) els.mlxModelInput.value = savedModel;
+    } catch {
+      /* ignore */
+    }
+    els.runMlxHandBtn.addEventListener("click", runMlxHandCheckOnFlaggedTasks);
+    if (els.resetMlxHandBtn) {
+      els.resetMlxHandBtn.addEventListener("click", resetMlxHandResults);
+    }
+    window.addEventListener("beforeunload", (event) => {
+      if (!mlxHandRunInProgress) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+  }
 }
 
 function resetFilters() {
@@ -866,6 +1113,159 @@ function finalAnnotationCaptionForTaskSegment(taskId, segmentId) {
   return "";
 }
 
+const MLX_HAND_EXPORT_COLUMNS = [
+  "mlx_hand_eval_ran",
+  "mlx_ok",
+  "mlx_mentions_both_hands_all_phases",
+  "mlx_false_evidence",
+  "mlx_error",
+];
+
+const MISSING_HAND_FLAG_EXPORT_COLUMNS = [
+  "deterministic_missing_hand_flag",
+  "deterministic_missing_hand_segment_ids",
+  "deterministic_missing_hand_messages",
+  "deterministic_missing_hand_evidence",
+  "final_missing_hand_flag",
+  "final_missing_hand_source",
+  "final_missing_hand_evidence",
+];
+
+function mlxEvalBothHandsAllPhases(ev) {
+  if (!ev || typeof ev !== "object") return undefined;
+  if (ev.all_nonempty_phases_mention_both_hands !== undefined) {
+    return ev.all_nonempty_phases_mention_both_hands;
+  }
+  return ev.mentions_hands_any_phase;
+}
+
+function mlxBoolValue(value) {
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  return undefined;
+}
+
+function mlxFalseEvidence(ev) {
+  const phases = Array.isArray(ev?.phases) ? ev.phases : [];
+  const failedPhases = phases.filter((phase) => {
+    const bothHands = mlxBoolValue(phase.mentions_both_hands_semantically);
+    if (bothHands === false) return true;
+
+    // Backward-compatible fallback for older MLX results.
+    const mentionsHands = mlxBoolValue(phase.mentions_hands);
+    return mentionsHands === false;
+  });
+  const taskPassed = mlxBoolValue(mlxEvalBothHandsAllPhases(ev));
+  if (!failedPhases.length && taskPassed !== false) return "";
+  if (!failedPhases.length) return ev?.rationale || "";
+  return failedPhases
+    .map((phase) => {
+      const idx = phase.phase_index ?? "?";
+      const segment = phase.segment_id ? `segment ${phase.segment_id}` : `phase ${idx}`;
+      return `${segment} (phase ${idx}): ${phase.reason || "missing both-hands evidence"}`;
+    })
+    .join(" | ");
+}
+
+/** Flat MLX hand-mention fields for CSV exports (from Run MLX hand check). */
+function mlxHandExportFieldsForTask(taskId) {
+  const mlx = state.mlxHandByTaskId[taskId];
+  if (!mlx) {
+    return {
+      mlx_hand_eval_ran: "",
+      mlx_ok: "",
+      mlx_mentions_both_hands_all_phases: "",
+      mlx_false_evidence: "",
+      mlx_error: "",
+    };
+  }
+  if (!mlx.ok) {
+    return {
+      mlx_hand_eval_ran: "yes",
+      mlx_ok: "no",
+      mlx_mentions_both_hands_all_phases: "",
+      mlx_false_evidence: "",
+      mlx_error: mlx.error || "unknown",
+    };
+  }
+  const ev = mlx.eval || {};
+  const bothHands = mlxBoolValue(mlxEvalBothHandsAllPhases(ev));
+  return {
+    mlx_hand_eval_ran: "yes",
+    mlx_ok: "yes",
+    mlx_mentions_both_hands_all_phases:
+      bothHands === true ? "true" : bothHands === false ? "false" : "",
+    mlx_false_evidence: mlxFalseEvidence(ev),
+    mlx_error: "",
+  };
+}
+
+function deterministicMissingHandIssuesForTask(taskId) {
+  return state.issues.filter(
+    (issue) => issue.task_id === taskId && issue.eval_name === MISSING_HAND_ANNOTATIONS_EVAL,
+  );
+}
+
+function deterministicMissingHandFieldsForTask(taskId) {
+  const issues = deterministicMissingHandIssuesForTask(taskId);
+  return {
+    deterministic_missing_hand_flag: issues.length ? "true" : "false",
+    deterministic_missing_hand_segment_ids: issues.map((issue) => issue.segment_id).filter(Boolean).join(";"),
+    deterministic_missing_hand_messages: [...new Set(issues.map((issue) => issue.message).filter(Boolean))].join(" | "),
+    deterministic_missing_hand_evidence: issues
+      .map((issue) => {
+        const segment = issue.segment_id ? `segment ${issue.segment_id}` : "segment ?";
+        return `${segment}: ${issue.evidence || issue.message || "deterministic missing-hand candidate"}`;
+      })
+      .join(" | "),
+  };
+}
+
+function finalMissingHandFieldsForTask(taskId) {
+  const deterministic = deterministicMissingHandFieldsForTask(taskId);
+  const deterministicFlag = deterministic.deterministic_missing_hand_flag === "true";
+  const mlx = state.mlxHandByTaskId[taskId];
+  if (mlx?.ok) {
+    const bothHands = mlxBoolValue(mlxEvalBothHandsAllPhases(mlx.eval || {}));
+    if (bothHands === true) {
+      return {
+        ...deterministic,
+        final_missing_hand_flag: "false",
+        final_missing_hand_source: "mlx",
+        final_missing_hand_evidence: "MLX semantic check passed: all non-empty phases account for both hands.",
+      };
+    }
+    if (bothHands === false) {
+      return {
+        ...deterministic,
+        final_missing_hand_flag: "true",
+        final_missing_hand_source: "mlx",
+        final_missing_hand_evidence: mlxFalseEvidence(mlx.eval || {}) || deterministic.deterministic_missing_hand_evidence,
+      };
+    }
+  }
+  if (mlx && mlx.ok === false) {
+    return {
+      ...deterministic,
+      final_missing_hand_flag: deterministicFlag ? "true" : "false",
+      final_missing_hand_source: "deterministic_fallback_mlx_error",
+      final_missing_hand_evidence: deterministic.deterministic_missing_hand_evidence || mlx.error || "MLX failed; deterministic fallback used.",
+    };
+  }
+  return {
+    ...deterministic,
+    final_missing_hand_flag: deterministicFlag ? "true" : "false",
+    final_missing_hand_source: deterministicFlag ? "deterministic" : "",
+    final_missing_hand_evidence: deterministic.deterministic_missing_hand_evidence,
+  };
+}
+
+function missingHandIssueFallbackEvidence(issue) {
+  if (issue?.eval_name !== MISSING_HAND_ANNOTATIONS_EVAL) return "";
+  const segment = issue.segment_id ? `segment ${issue.segment_id}` : "missing-hand segment";
+  return `${segment}: deterministic ${issue.message || "missing hand annotation"} — ${issue.evidence || "no MLX result for this task"}`;
+}
+
 function overlapsForTask(taskId) {
   return state.overlaps.filter((overlap) => overlap.task_id === taskId);
 }
@@ -917,6 +1317,7 @@ function renderAll() {
     state.selectedTaskId = tasks[0]?.task_id || state.tasks[0]?.task_id || null;
   }
   renderStats(tasks);
+  renderIssueReportSummary(tasks);
   renderTaskDecision();
   renderEvalInfo();
   renderTaskList(tasks);
@@ -924,17 +1325,18 @@ function renderAll() {
 }
 
 function renderTaskDecision() {
+  if (!els.reviewDecisionStatus) return;
   const decision = decisionForTask(state.selectedTaskId);
   els.reviewDecisionStatus.textContent = decisionLabel(decision.status);
   els.reviewDecisionStatus.className = `badge decision-badge ${decisionClass(decision.status)}`;
-  els.reviewNotesInput.value = decision.notes || "";
-  els.approveTaskBtn.classList.toggle("active", decision.status === "approved");
-  els.rejectTaskBtn.classList.toggle("active", decision.status === "rejected");
+  if (els.reviewNotesInput) els.reviewNotesInput.value = decision.notes || "";
+  els.approveTaskBtn?.classList.toggle("active", decision.status === "approved");
+  els.rejectTaskBtn?.classList.toggle("active", decision.status === "rejected");
   const disabled = !state.selectedTaskId;
-  els.approveTaskBtn.disabled = disabled;
-  els.rejectTaskBtn.disabled = disabled;
-  els.clearTaskDecisionBtn.disabled = disabled || decision.status === "unreviewed";
-  els.reviewNotesInput.disabled = disabled;
+  if (els.approveTaskBtn) els.approveTaskBtn.disabled = disabled;
+  if (els.rejectTaskBtn) els.rejectTaskBtn.disabled = disabled;
+  if (els.clearTaskDecisionBtn) els.clearTaskDecisionBtn.disabled = disabled || decision.status === "unreviewed";
+  if (els.reviewNotesInput) els.reviewNotesInput.disabled = disabled;
 }
 
 function renderEvalInfo() {
@@ -1006,6 +1408,44 @@ function renderStats(tasks) {
     .join("");
 }
 
+function renderIssueReportSummary(tasks) {
+  const root = $("issueReportSummary");
+  if (!root) return;
+  const rows = buildIssueReportRows(tasks);
+  const sections = ["Summary", "Severity Breakdown", "Gap Buckets", "Overlap Buckets", "Issue Breakdown"];
+  const sectionHtml = sections
+    .map((section) => {
+      const sectionRows = rows.filter((row) => row.section === section);
+      if (!sectionRows.length) return "";
+      return `
+        <div class="issue-report-section">
+          <div class="section-header">
+            <h2>${escapeHtml(section)}</h2>
+            <span>${fmt(sectionRows.length, 0)} rows</span>
+          </div>
+          <div class="issue-report-table">
+            ${sectionRows
+              .map(
+                (row) => `
+                  <div class="issue-report-row">
+                    <div>
+                      <strong>${escapeHtml(row.metric)}</strong>
+                      <p>${escapeHtml(row.description || row.eval_name || "")}</p>
+                    </div>
+                    <div class="issue-report-count">${fmt(row.count, 0)}</div>
+                    <div class="issue-report-percent">${escapeHtml(row.percent_of_flags || "")}</div>
+                  </div>
+                `,
+              )
+              .join("")}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+  root.innerHTML = sectionHtml || '<div class="empty">No issues in the current filter.</div>';
+}
+
 function renderTaskList(tasks) {
   $("taskCount").textContent = fmt(tasks.length);
   $("taskList").innerHTML = tasks
@@ -1014,6 +1454,15 @@ function renderTaskList(tasks) {
       const active = task.task_id === state.selectedTaskId ? "active" : "";
       const maxSeverity = task.critical_count ? "critical" : task.high_count ? "high" : task.medium_count ? "medium" : task.low_count ? "low" : "";
       const decision = decisionForTask(task.task_id);
+      const mlx = state.mlxHandByTaskId[task.task_id];
+      let mlxBadge = "";
+      if (mlx?.ok && mlx.eval && mlxEvalBothHandsAllPhases(mlx.eval) === false) {
+        mlxBadge = `<span class="badge high" title="MLX: not all phases mention both hands semantically">MLX both</span>`;
+      } else if (mlx?.ok) {
+        mlxBadge = `<span class="badge low" title="MLX: both hands mentioned in all non-empty phases">MLX both ok</span>`;
+      } else if (mlx && mlx.ok === false) {
+        mlxBadge = `<span class="badge medium" title="MLX error or skipped">MLX !</span>`;
+      }
       return `
         <article class="task-card ${active}" data-task-id="${escapeHtml(task.task_id)}">
           <div class="task-card-title">
@@ -1026,6 +1475,7 @@ function renderTaskList(tasks) {
             <span class="badge critical">${fmt(task.critical_count)} critical</span>
             <span class="badge high">${fmt(task.overlap_count)} overlaps</span>
             <span class="badge medium">${fmt(task.group_cover_count)} covers</span>
+            ${mlxBadge}
             <span class="badge decision-badge ${decisionClass(decision.status)}">${escapeHtml(decisionLabel(decision.status))}</span>
           </div>
         </article>`;
@@ -1062,10 +1512,14 @@ function exportSidebarFilteredTasks(tasks = filteredTasks()) {
     "overlap_count",
     "group_cover_count",
     "eval_names",
+    ...MISSING_HAND_FLAG_EXPORT_COLUMNS,
+    ...MLX_HAND_EXPORT_COLUMNS,
   ];
   const rows = tasks.map((task) => ({
     ...task,
     eval_names: (task.eval_names || []).join(";"),
+    ...finalMissingHandFieldsForTask(task.task_id),
+    ...mlxHandExportFieldsForTask(task.task_id),
   }));
   downloadFile("zion_sidebar_filtered_tasks.csv", toCsv(rows, header), "text/csv;charset=utf-8");
 }
@@ -1092,6 +1546,8 @@ function buildReviewExportRows(status, tasks = filteredTasks()) {
         low_count: task.low_count,
         overlap_count: task.overlap_count,
         group_cover_count: task.group_cover_count,
+        ...finalMissingHandFieldsForTask(task.task_id),
+        ...mlxHandExportFieldsForTask(task.task_id),
       };
       if (!taskIssues.length) {
         return [{
@@ -1152,6 +1608,8 @@ function buildTasksWithFlagsExportRows(tasks = filteredTasks()) {
       review_decision: decision.status,
       review_notes: decision.notes,
       reviewed_at: decision.reviewed_at,
+      ...finalMissingHandFieldsForTask(task.task_id),
+      ...mlxHandExportFieldsForTask(task.task_id),
     };
     if (!taskIssues.length) {
       return [{
@@ -1169,20 +1627,24 @@ function buildTasksWithFlagsExportRows(tasks = filteredTasks()) {
         suggested_action: "",
       }];
     }
-    return taskIssues.map((issue) => ({
-      ...base,
-      issue_id: issue.issue_id,
-      segment_id: issue.segment_id,
-      final_annotation_caption: finalAnnotationCaptionForTaskSegment(task.task_id, issue.segment_id),
-      source: issue.source,
-      eval_name: issue.eval_name,
-      severity: issue.severity,
-      issue_message: issue.message,
-      evidence: issue.evidence,
-      start_sec: issue.start_sec,
-      end_sec: issue.end_sec,
-      suggested_action: issue.suggested_action,
-    }));
+    return taskIssues.map((issue) => {
+      const fallbackEvidence = base.mlx_false_evidence || missingHandIssueFallbackEvidence(issue);
+      return {
+        ...base,
+        mlx_false_evidence: fallbackEvidence,
+        issue_id: issue.issue_id,
+        segment_id: issue.segment_id,
+        final_annotation_caption: finalAnnotationCaptionForTaskSegment(task.task_id, issue.segment_id),
+        source: issue.source,
+        eval_name: issue.eval_name,
+        severity: issue.severity,
+        issue_message: issue.message,
+        evidence: issue.evidence,
+        start_sec: issue.start_sec,
+        end_sec: issue.end_sec,
+        suggested_action: issue.suggested_action,
+      };
+    });
   });
 }
 
@@ -1222,8 +1684,124 @@ function exportTasksWithFlags(tasks = filteredTasks()) {
     "start_sec",
     "end_sec",
     "suggested_action",
+    ...MISSING_HAND_FLAG_EXPORT_COLUMNS,
+    ...MLX_HAND_EXPORT_COLUMNS,
   ];
   downloadFile("zion_filtered_tasks_with_flags.csv", toCsv(buildTasksWithFlagsExportRows(tasks), header), "text/csv;charset=utf-8");
+}
+
+function exportMlxHandSummaryCsv(tasks = filteredTasks()) {
+  const header = [
+    "task_id",
+    "client_folder_name",
+    "task_name",
+    "trainer_user_id",
+    "issue_count",
+    ...MISSING_HAND_FLAG_EXPORT_COLUMNS,
+    ...MLX_HAND_EXPORT_COLUMNS,
+  ];
+  const rows = tasks.map((task) => ({
+    task_id: task.task_id,
+    client_folder_name: task.client_folder_name,
+    task_name: task.task_name,
+    trainer_user_id: task.trainer_user_id,
+    issue_count: task.issue_count,
+    ...finalMissingHandFieldsForTask(task.task_id),
+    ...mlxHandExportFieldsForTask(task.task_id),
+  }));
+  downloadFile("zion_mlx_hand_summary.csv", toCsv(rows, header), "text/csv;charset=utf-8");
+}
+
+function evalInfoByName() {
+  return Object.fromEntries(EVAL_INFO.map((info) => [info.name, info]));
+}
+
+function reportBucketForDuration(seconds) {
+  const n = safeNumber(seconds);
+  if (n < 1) return "Micro";
+  if (n < 3) return "Minor";
+  if (n < 8) return "Major";
+  return "Critical";
+}
+
+function reportBucketDescription(kind, bucket) {
+  const ranges = {
+    Micro: "< 1s",
+    Minor: "1s to < 3s",
+    Major: "3s to < 8s",
+    Critical: ">= 8s",
+  };
+  return `${bucket} ${kind.toLowerCase()} by duration bucket (${ranges[bucket]}).`;
+}
+
+function buildIssueReportRows(tasks = filteredTasks()) {
+  const taskIds = new Set(tasks.map((task) => task.task_id));
+  const issues = state.issues.filter((issue) => taskIds.has(issue.task_id));
+  const infoByName = evalInfoByName();
+  const totalFlags = issues.length;
+  const rows = [];
+  const addRow = (section, metric, count, description = "", evalName = "", severity = "", percentBase = totalFlags) => {
+    const pct = percentBase ? (safeNumber(count) / percentBase) * 100 : 0;
+    rows.push({
+      section,
+      metric,
+      eval_name: evalName,
+      severity,
+      count: safeNumber(count),
+      percent_of_flags: percentBase ? `${fmt(pct, 1)}%` : "",
+      description,
+    });
+  };
+
+  addRow("Summary", "Filtered tasks", tasks.length, "Number of tasks included in the active filter.", "", "", 0);
+  addRow("Summary", "Total flags", totalFlags, "Total issue rows detected in the active filter.");
+  for (const severity of ["critical", "high", "medium", "low"]) {
+    addRow(
+      "Severity Breakdown",
+      `${severity} flags`,
+      issues.filter((issue) => issue.severity === severity).length,
+      `Flags with ${severity} severity.`,
+    );
+  }
+
+  const gapIssues = issues.filter((issue) => issue.eval_name === "segment_gap_analysis_eval" || issue.eval_name === "timestamp_gap_eval");
+  for (const bucket of ["Micro", "Minor", "Major", "Critical"]) {
+    const count = gapIssues.filter((issue) => reportBucketForDuration(issue.gap_duration ?? ((issue.end_sec ?? 0) - (issue.start_sec ?? 0))) === bucket).length;
+    addRow("Gap Buckets", `${bucket} Gaps`, count, reportBucketDescription("Gaps", bucket), "segment_gap_analysis_eval", "", gapIssues.length);
+  }
+
+  const overlapIssues = issues.filter((issue) => issue.eval_name === "segment_overlap_analysis_eval");
+  for (const bucket of ["Micro", "Minor", "Major", "Critical"]) {
+    const count = overlapIssues.filter((issue) => reportBucketForDuration(issue.overlap_duration ?? ((issue.end_sec ?? 0) - (issue.start_sec ?? 0))) === bucket).length;
+    addRow("Overlap Buckets", `${bucket} Overlaps`, count, reportBucketDescription("Overlaps", bucket), "segment_overlap_analysis_eval", "", overlapIssues.length);
+  }
+
+  const byEval = new Map();
+  for (const issue of issues) {
+    if (!byEval.has(issue.eval_name)) byEval.set(issue.eval_name, []);
+    byEval.get(issue.eval_name).push(issue);
+  }
+  [...byEval.entries()]
+    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+    .forEach(([evalName, evalIssues]) => {
+      const info = infoByName[evalName];
+      const severities = [...new Set(evalIssues.map((issue) => issue.severity).filter(Boolean))].join("/");
+      addRow(
+        "Issue Breakdown",
+        `${evalName}: ${fmt(evalIssues.length, 0)} flags`,
+        evalIssues.length,
+        info?.checks || "Issue detected by the Zion eval pipeline.",
+        evalName,
+        severities,
+      );
+    });
+  return rows;
+}
+
+function exportIssueReportSummaryCsv(tasks = filteredTasks()) {
+  const rows = buildIssueReportRows(tasks);
+  const header = ["section", "metric", "eval_name", "severity", "count", "percent_of_flags", "description"];
+  downloadFile("zion_issue_report_summary.csv", toCsv(rows, header), "text/csv;charset=utf-8");
 }
 
 function exportReviewedTasks(status, tasks = filteredTasks()) {
@@ -1254,6 +1832,8 @@ function exportReviewedTasks(status, tasks = filteredTasks()) {
     "start_sec",
     "end_sec",
     "suggested_action",
+    ...MISSING_HAND_FLAG_EXPORT_COLUMNS,
+    ...MLX_HAND_EXPORT_COLUMNS,
   ];
   const filename = status === "approved" ? "zion_approved_tasks.csv" : "zion_rejected_tasks_with_flags.csv";
   downloadFile(filename, toCsv(rows, header), "text/csv;charset=utf-8");
@@ -1294,6 +1874,13 @@ function renderSelectedTask() {
 
 function renderTaskDetail(task) {
   const objects = (task.object_inventory || []).slice(0, 18);
+  const mlx = state.mlxHandByTaskId[task.task_id];
+  const mlxBlock = mlx
+    ? `<div class="mlx-hand-panel">
+        <div class="section-header"><h2>MLX both-hands check</h2><span>local LLM</span></div>
+        <pre class="mlx-hand-json">${escapeHtml(JSON.stringify(mlx, null, 2))}</pre>
+      </div>`
+    : `<div class="mlx-hand-panel muted"><p>No MLX result for this task. Use <strong>Run MLX hand check (missing hand)</strong> in the header (requires the local Python server).</p></div>`;
   $("taskDetail").innerHTML = `
     <div class="kv"><span>Status</span><strong>${escapeHtml(task.status)}</strong></div>
     <div class="kv"><span>Trainer</span><strong>${escapeHtml(task.trainer_user_id)}</strong></div>
@@ -1309,7 +1896,8 @@ function renderTaskDetail(task) {
     <div>
       <div class="section-header"><h2>Eval Types</h2><span>${fmt((task.eval_names || []).length)}</span></div>
       <div class="object-list">${(task.eval_names || []).map((name) => `<span class="badge">${escapeHtml(name)}</span>`).join("") || '<span class="empty">No issues</span>'}</div>
-    </div>`;
+    </div>
+    ${mlxBlock}`;
 }
 
 function segmentIssuesMap(taskId) {
@@ -1844,21 +2432,21 @@ function strictMissingHandIssueForSegment(segment) {
   const hasBothAsSubjectVerbPhrase = bothSubjectVerbAtStart(capTrim) || bothSubjectVerbAtStart(veTrim);
   const hasLeftCanonical = /\bleft\s+hand\b/.test(text);
   const hasRightCanonical = /\bright\s+hand\b/.test(text);
+  const hasLeftPlural = /\bleft\s+hands\b/.test(text);
+  const hasRightPlural = /\bright\s+hands\b/.test(text);
   const hasLeftMention =
     hasLeftCanonical ||
+    hasLeftPlural ||
     /\bleft-hand\b/.test(text) ||
     /\blefthand\b/.test(text) ||
-    /\bleftt\s+hand\b/.test(text) ||
-    /\b(?:la\s+)?mano\s+izquierda\b/.test(text);
+    /\bleftt\s+hand\b/.test(text);
   const hasRightMention =
     hasRightCanonical ||
+    hasRightPlural ||
     /\bright-hand\b/.test(text) ||
     /\brighthand\b/.test(text) ||
     /\blright\s+hand\b/.test(text) ||
-    /\brileft\s+hand\b/.test(text) ||
-    /\b(?:la\s+)?mano\s+derecha\b/.test(text);
-  const hasLeftPlural = /\bleft\s+hands\b/.test(text);
-  const hasRightPlural = /\bright\s+hands\b/.test(text);
+    /\brileft\s+hand\b/.test(text);
   const hasSimpleBoth = /\bboth\b/.test(text);
   const hasGenericHands = /\bhands?\b/.test(text);
   // "right and left hands", "Both the right and the left hands", etc. — coordinated both sides; valid before isolated `left hands` / `right hands` checks.
@@ -1875,23 +2463,6 @@ function strictMissingHandIssueForSegment(segment) {
     hasCoordinatedBothSidesHandsPhrase
   ) {
     return null;
-  }
-
-  if (hasLeftPlural || hasRightPlural) {
-    const found = [hasLeftPlural && "`left hands`", hasRightPlural && "`right hands`"].filter(Boolean).join(" and ");
-    return {
-      issue_id: `HAND-MENTION-${segment.segment_id}`,
-      task_id: segment.task_id,
-      segment_id: segment.segment_id,
-      source: "final",
-      eval_name: "hand_mention_eval",
-      severity: "low",
-      message: "Hand mention uses noncanonical plural (left/right + hands)",
-      evidence: `Found ${found}. Zion uses singular \`left hand\` and \`right hand\` for each side when spelling out hands.`,
-      start_sec: segment.start_sec,
-      end_sec: segment.end_sec,
-      suggested_action: "Replace `left hands` → `left hand` and `right hands` → `right hand` where each side is meant.",
-    };
   }
 
   const hasLeft = hasLeftMention;
@@ -1944,6 +2515,45 @@ function strictMissingHandIssueForSegment(segment) {
   };
 }
 
+function captionGrammarIssueForSegment(segment) {
+  if (segment.source !== "final") return null;
+  const text = String(segment.caption || "").trim();
+  if (!text || text.toLowerCase() === "no caption") return null;
+  const findings = [];
+  const lower = text.toLowerCase();
+
+  if (/\b(?:left|right)\s+handhold\b/.test(lower)) {
+    findings.push("missing space between `hand` and `hold`");
+  }
+  const hasLeftPlural = /\bleft\s+hands\b/.test(lower);
+  const hasRightPlural = /\bright\s+hands\b/.test(lower);
+  if (hasLeftPlural || hasRightPlural) {
+    const found = [hasLeftPlural && "`left hands`", hasRightPlural && "`right hands`"].filter(Boolean).join(" and ");
+    findings.push(`noncanonical side plural ${found}; use singular \`left hand\` / \`right hand\``);
+  }
+  if (/\b(?:left|right)\s+hand(?:\s+\w+)?\s+(?:turn|open|close|pick|place|lift|hold|grasp|reach|pull|push|press|drop|insert|remove|release|touch|tilt|pour)\b/.test(lower)) {
+    findings.push("possible missing third-person verb ending after `left/right hand`");
+  }
+  if (/\s{2,}/.test(text)) {
+    findings.push("repeated whitespace");
+  }
+
+  if (!findings.length) return null;
+  return {
+    issue_id: `GRAMMAR-${segment.segment_id}`,
+    task_id: segment.task_id,
+    segment_id: segment.segment_id,
+    source: "final",
+    eval_name: "caption_grammar_eval",
+    severity: "low",
+    message: "Caption has an obvious grammar or typo issue",
+    evidence: [...new Set(findings)].join("; "),
+    start_sec: segment.start_sec,
+    end_sec: segment.end_sec,
+    suggested_action: "Fix grammar/spacing while preserving the described hand actions.",
+  };
+}
+
 function recalculateTaskIssueCounts(taskIds = null) {
   const targetIds = taskIds || new Set(state.tasks.map((task) => task.task_id));
   for (const task of state.tasks) {
@@ -1964,13 +2574,13 @@ function recalculateTaskIssueCounts(taskIds = null) {
 
 function applyStrictMissingHandEval(taskIds = null) {
   const targetIds = taskIds || new Set(state.tasks.map((task) => task.task_id));
-  const handCaptionEvalNames = ["missing_hand_annotations_eval", "hand_mention_eval"];
+  const handCaptionEvalNames = ["missing_hand_annotations_eval", "hand_mention_eval", "caption_grammar_eval"];
   state.issues = state.issues.filter(
     (issue) => !handCaptionEvalNames.includes(issue.eval_name) || !targetIds.has(issue.task_id)
   );
   const newIssues = state.finalSegments
     .filter((segment) => targetIds.has(segment.task_id))
-    .map(strictMissingHandIssueForSegment)
+    .flatMap((segment) => [strictMissingHandIssueForSegment(segment), captionGrammarIssueForSegment(segment)])
     .filter(Boolean);
   state.issues.push(...newIssues);
   recalculateTaskIssueCounts(targetIds);
@@ -2010,7 +2620,6 @@ function applyAdvancedTimelineEvals(taskIds = null) {
 }
 
 function buildOverlapData(task, finalSegments) {
-  const issues = [];
   const overlaps = [];
   const valid = finalSegments
     .filter((segment) => segment.start_sec !== null && segment.end_sec !== null && segment.end_sec > segment.start_sec)
@@ -2036,22 +2645,9 @@ function buildOverlapData(task, finalSegments) {
         severity: seconds >= 2 ? "critical" : "high",
       };
       overlaps.push(overlap);
-      issues.push({
-        issue_id: `UPLOAD-${task.task_id}-overlap-${i}-${j}`,
-        task_id: task.task_id,
-        segment_id: valid[j].segment_id,
-        source: "final",
-        eval_name: "segment_overlap_eval",
-        severity: overlap.severity,
-        message: "Uploaded CSV final segments overlap in time",
-        evidence: `${fmt(seconds, 3)}s overlap between segments ${valid[i].array_index} and ${valid[j].array_index}`,
-        start_sec: start,
-        end_sec: end,
-        suggested_action: "Review whether one segment should be split, merged, or removed.",
-      });
     }
   }
-  return { issues, overlaps };
+  return { overlaps };
 }
 
 function buildGapIssues(task, finalSegments, minGapSeconds = 3) {
@@ -2164,14 +2760,20 @@ function buildDashboardDataFromRows(rows) {
       risk_score: 0,
       eval_names: [],
       group_cover_count: 0,
+      final_annotations_raw:
+        typeof row.final_annotations === "string" && row.final_annotations.trim()
+          ? row.final_annotations
+          : JSON.stringify(finalAnnotation),
     };
     const taskOriginalSegments = normalizeSegments(task.task_id, "original", clientAnnotation);
     const taskFinalSegments = normalizeSegments(task.task_id, "final", finalAnnotation);
     const overlapData = buildOverlapData(task, taskFinalSegments);
     const gapIssues = buildGapIssues(task, taskFinalSegments);
-    const handIssues = taskFinalSegments.map(strictMissingHandIssueForSegment).filter(Boolean);
+    const handIssues = taskFinalSegments
+      .flatMap((segment) => [strictMissingHandIssueForSegment(segment), captionGrammarIssueForSegment(segment)])
+      .filter(Boolean);
     const timestampIssues = taskFinalSegments.map((segment) => timestampValidityIssueForSegment(task, segment)).filter(Boolean);
-    const taskIssues = [...overlapData.issues, ...gapIssues, ...handIssues, ...timestampIssues];
+    const taskIssues = [...gapIssues, ...handIssues, ...timestampIssues];
     const counts = issueSeverityCounts(taskIssues);
     Object.assign(task, counts);
     task.issue_count = taskIssues.length;
@@ -2221,8 +2823,33 @@ function exportFilteredCsv() {
   const taskIds = new Set(tasks.map((task) => task.task_id));
 
   if (exportType === "tasks_csv") {
-    const header = ["task_id", "task_name", "trainer_user_id", "risk_score", "issue_count", "critical_count", "high_count", "overlap_count", "group_cover_count"];
-    downloadFile("zion_filtered_tasks.csv", toCsv(tasks, header), "text/csv;charset=utf-8");
+    const header = [
+      "task_id",
+      "task_name",
+      "trainer_user_id",
+      "risk_score",
+      "issue_count",
+      "critical_count",
+      "high_count",
+      "overlap_count",
+      "group_cover_count",
+      ...MISSING_HAND_FLAG_EXPORT_COLUMNS,
+      ...MLX_HAND_EXPORT_COLUMNS,
+    ];
+    const rows = tasks.map((task) => ({
+      task_id: task.task_id,
+      task_name: task.task_name,
+      trainer_user_id: task.trainer_user_id,
+      risk_score: task.risk_score,
+      issue_count: task.issue_count,
+      critical_count: task.critical_count,
+      high_count: task.high_count,
+      overlap_count: task.overlap_count,
+      group_cover_count: task.group_cover_count,
+      ...finalMissingHandFieldsForTask(task.task_id),
+      ...mlxHandExportFieldsForTask(task.task_id),
+    }));
+    downloadFile("zion_filtered_tasks.csv", toCsv(rows, header), "text/csv;charset=utf-8");
     return;
   }
 
@@ -2231,14 +2858,44 @@ function exportFilteredCsv() {
     return;
   }
 
+  if (exportType === "issue_report_summary_csv") {
+    exportIssueReportSummaryCsv(tasks);
+    return;
+  }
+
   if (exportType === "sidebar_tasks_csv") {
     exportSidebarFilteredTasks(tasks);
     return;
   }
 
+  if (exportType === "mlx_hand_summary_csv") {
+    exportMlxHandSummaryCsv(tasks);
+    return;
+  }
+
   if (exportType === "issues_csv") {
-    const rows = state.issues.filter((issue) => taskIds.has(issue.task_id));
-    const header = ["issue_id", "task_id", "segment_id", "source", "eval_name", "severity", "message", "evidence", "start_sec", "end_sec", "suggested_action"];
+    const rows = state.issues
+      .filter((issue) => taskIds.has(issue.task_id))
+      .map((issue) => ({
+        ...issue,
+        ...finalMissingHandFieldsForTask(issue.task_id),
+        ...mlxHandExportFieldsForTask(issue.task_id),
+      }));
+    const header = [
+      "issue_id",
+      "task_id",
+      "segment_id",
+      "source",
+      "eval_name",
+      "severity",
+      "message",
+      "evidence",
+      "start_sec",
+      "end_sec",
+      "suggested_action",
+      ...MISSING_HAND_FLAG_EXPORT_COLUMNS,
+      ...MLX_HAND_EXPORT_COLUMNS,
+    ];
     downloadFile("zion_filtered_issues.csv", toCsv(rows, header), "text/csv;charset=utf-8");
     return;
   }
@@ -2285,6 +2942,9 @@ function exportFilteredCsv() {
     original_segments: state.originalSegments.filter((segment) => taskIds.has(segment.task_id)),
     final_segments: state.finalSegments.filter((segment) => taskIds.has(segment.task_id)),
     decisions: Object.fromEntries(Object.entries(state.decisions).filter(([taskId]) => taskIds.has(taskId))),
+    mlx_hand_by_task_id: Object.fromEntries(
+      Object.entries(state.mlxHandByTaskId).filter(([taskId]) => taskIds.has(taskId)),
+    ),
   };
   downloadFile("zion_filtered_bundle.json", JSON.stringify(bundle, null, 2), "application/json;charset=utf-8");
 }

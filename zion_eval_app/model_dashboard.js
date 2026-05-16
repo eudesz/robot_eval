@@ -43,13 +43,6 @@ const els = {};
 
 const EVAL_INFO = [
   {
-    name: "segment_overlap_eval",
-    severity: "critical/high",
-    checks: "Final timeline segments that overlap each other in time.",
-    why: "Two final captions should not normally claim the same time window unless the schema explicitly supports parallel actions.",
-    limitation: "Flags internal timeline conflict only; it does not know which segment is visually correct.",
-  },
-  {
     name: "segment_group_cover_eval",
     severity: "critical/high",
     checks: "A long final segment that contains multiple smaller final segments inside its time range.",
@@ -104,13 +97,6 @@ const EVAL_INFO = [
     checks: "Possible cases where one hand is labeled but the caption suggests coordinated two-hand interaction.",
     why: "Zion captions should accurately describe left, right, or both-hand participation.",
     limitation: "Without video this is only a possible issue, because both hands may not actually be visible.",
-  },
-  {
-    name: "hand_mention_eval",
-    severity: "low",
-    checks: "Uses `left hands` or `right hands` alone instead of `left hand` / `right hand` (exempts coordinated phrases like `right and left hands` or `Both the right and the left hands`).",
-    why: "Participation is described, but isolated plural after left/right is nonstandard for Zion.",
-    limitation: "Does not judge whether the described actions match the video.",
   },
   {
     name: "segment_granularity_eval",

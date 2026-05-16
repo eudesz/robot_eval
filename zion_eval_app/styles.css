@@ -371,6 +371,74 @@ button {
   font-weight: 800;
 }
 
+.hero-actions-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mlx-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.mlx-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mlx-toolbar input[type="url"],
+.mlx-toolbar input[type="text"] {
+  min-width: 200px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.mlx-toolbar input[type="text"] {
+  min-width: 260px;
+}
+
+.mlx-status {
+  font-size: 12px;
+  font-weight: 600;
+  max-width: 320px;
+  line-height: 1.35;
+}
+
+.mlx-hand-panel {
+  margin-top: 14px;
+}
+
+.mlx-hand-json {
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 button:hover {
   border-color: var(--accent);
 }
@@ -389,12 +457,66 @@ button:hover {
 
 .eval-info-panel,
 .review-decision-panel,
-.csv-loader-panel {
+.csv-loader-panel,
+.issue-report-panel {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: 18px;
   margin-bottom: 22px;
+}
+
+.issue-report-summary {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.issue-report-section {
+  background: #080c13;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.issue-report-table {
+  display: grid;
+  gap: 6px;
+}
+
+.issue-report-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: start;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 8px;
+}
+
+.issue-report-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.issue-report-row p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  margin-top: 3px;
+}
+
+.issue-report-count {
+  color: var(--text);
+  font-weight: 800;
+  text-align: right;
+}
+
+.issue-report-percent {
+  color: var(--accent-strong);
+  min-width: 56px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .review-decision-actions {
