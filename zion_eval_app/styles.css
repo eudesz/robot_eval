@@ -666,6 +666,7 @@ textarea:focus {
 .timeline-panel,
 .detail-panel,
 .selected-segment-panel,
+.segment-list-panel,
 .issues-panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -683,9 +684,13 @@ textarea:focus {
   grid-column: 1 / 2;
 }
 
+.segment-list-panel {
+  grid-column: 1 / 2;
+}
+
 .detail-panel {
   grid-column: 2 / 3;
-  grid-row: 1 / span 2;
+  grid-row: 1 / span 3;
 }
 
 .timeline-controls {
@@ -1018,6 +1023,73 @@ textarea:focus {
 .selected-segment-detail {
   display: grid;
   gap: 12px;
+}
+
+.segment-list {
+  display: grid;
+  gap: 12px;
+  max-height: 720px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.segment-list-card {
+  display: grid;
+  gap: 12px;
+  background: #090d14;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  cursor: pointer;
+}
+
+.segment-list-card:hover,
+.segment-list-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(111, 125, 255, 0.35);
+}
+
+.segment-list-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.segment-list-card h4 {
+  font-size: 14px;
+  margin: 0 0 6px;
+}
+
+.segment-list-time {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.segment-list-badges {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  min-width: 180px;
+}
+
+.segment-list-meta {
+  display: grid;
+  gap: 8px;
+}
+
+.segment-list-issues {
+  display: grid;
+  gap: 8px;
+}
+
+.segment-list-issue {
+  background: var(--panel-soft);
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 10px;
 }
 
 .caption-reader {

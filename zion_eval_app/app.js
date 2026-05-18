@@ -848,6 +848,7 @@ function bindEvents() {
     renderSegmentIssueTypeSummary();
     els.segmentIssueTypeMenu.hidden = true;
     renderTimeline();
+    renderSegmentList();
   });
   els.segmentIssueTypeMenu.addEventListener("click", (event) => {
     if (event.target.dataset.segmentIssueAction === "select-all") {
@@ -858,6 +859,7 @@ function bindEvents() {
       renderSegmentIssueTypeSummary();
       els.segmentIssueTypeMenu.hidden = true;
       renderTimeline();
+      renderSegmentList();
     }
     if (event.target.dataset.segmentIssueAction === "clear") {
       state.filters.segmentIssueTypes = [];
@@ -867,6 +869,7 @@ function bindEvents() {
       renderSegmentIssueTypeSummary();
       els.segmentIssueTypeMenu.hidden = true;
       renderTimeline();
+      renderSegmentList();
     }
   });
   document.addEventListener("click", (event) => {
@@ -941,6 +944,7 @@ function bindEvents() {
   els.issuesOnlyTimeline.addEventListener("change", () => {
     state.filters.issuesOnlyTimeline = els.issuesOnlyTimeline.checked;
     renderTimeline();
+    renderSegmentList();
   });
   els.resetFiltersBtn.addEventListener("click", resetFilters);
   els.exportFilteredBtn.addEventListener("click", exportFilteredCsv);
@@ -1884,6 +1888,8 @@ function renderSelectedTask() {
     $("riskBadge").textContent = "No task";
     $("taskDetail").innerHTML = '<div class="empty">No task selected.</div>';
     $("timeline").innerHTML = '<div class="empty">Load a CSV to generate timelines.</div>';
+    $("segmentListCount").textContent = "0";
+    $("segmentList").innerHTML = '<div class="empty">No segments loaded.</div>';
     $("selectedSegmentBadge").textContent = "None";
     $("selectedSegmentBadge").className = "badge";
     $("selectedSegmentDetail").innerHTML = '<div class="empty">No segment selected.</div>';
@@ -1901,6 +1907,7 @@ function renderSelectedTask() {
   $("riskBadge").textContent = `Risk ${task.risk_score}`;
   renderTaskDetail(task);
   renderTimeline();
+  renderSegmentList();
   renderIssues();
 }
 
@@ -1942,23 +1949,29 @@ function segmentIssuesMap(taskId) {
   return map;
 }
 
-function renderTimeline() {
-  const task = selectedTask();
-  if (!task) return;
-  const original = state.originalSegments.filter((segment) => segment.task_id === task.task_id);
-  const final = state.finalSegments.filter((segment) => segment.task_id === task.task_id);
-  const segmentIssues = segmentIssuesMap(task.task_id);
-  const duration = Math.max(task.final_duration_secs || task.actual_video_duration || 1, 1);
-  const width = Math.max(780, duration * 12 * state.filters.zoom);
-
-  const renderLane = (label, source, segments) => {
-    const visible = segments.filter((segment) => {
-      if (source !== "final") return true;
+function visibleFinalSegmentsForTask(taskId, segmentIssues = segmentIssuesMap(taskId)) {
+  return state.finalSegments
+    .filter((segment) => segment.task_id === taskId)
+    .filter((segment) => {
       const issues = segmentIssues.get(segment.segment_id) || [];
       if (state.filters.issuesOnlyTimeline && !issues.length) return false;
       if (state.filters.segmentIssueTypes.length && !issues.some((issue) => state.filters.segmentIssueTypes.includes(issue.eval_name))) return false;
       return true;
-    });
+    })
+    .sort((a, b) => (a.start_sec ?? Number.MAX_SAFE_INTEGER) - (b.start_sec ?? Number.MAX_SAFE_INTEGER) || (a.array_index ?? 0) - (b.array_index ?? 0));
+}
+
+function renderTimeline() {
+  const task = selectedTask();
+  if (!task) return;
+  const original = state.originalSegments.filter((segment) => segment.task_id === task.task_id);
+  const segmentIssues = segmentIssuesMap(task.task_id);
+  const final = visibleFinalSegmentsForTask(task.task_id, segmentIssues);
+  const duration = Math.max(task.final_duration_secs || task.actual_video_duration || 1, 1);
+  const width = Math.max(780, duration * 12 * state.filters.zoom);
+
+  const renderLane = (label, source, segments) => {
+    const visible = source === "final" ? segments : segments;
     return `
       <div class="lane" style="width:${width}px">
         <div class="lane-header"><span>${label}</span><span>${visible.length} segments</span></div>
@@ -1982,6 +1995,7 @@ function renderTimeline() {
     segmentEl.addEventListener("click", () => {
       state.selectedSegmentId = segmentEl.dataset.segmentId;
       renderTimeline();
+      renderSegmentList();
       renderSelectedSegmentDetail();
       renderIssues();
     });
@@ -2041,6 +2055,80 @@ function renderSelectedSegmentDetail() {
         .join("")}
     ` : ""}
   `;
+}
+
+function renderSegmentList() {
+  const task = selectedTask();
+  if (!task) return;
+
+  const segmentIssues = segmentIssuesMap(task.task_id);
+  const segments = visibleFinalSegmentsForTask(task.task_id, segmentIssues);
+  $("segmentListCount").textContent = `${fmt(segments.length)} shown`;
+  $("segmentList").innerHTML = segments.length
+    ? segments.map((segment) => renderSegmentListCard(segment, segmentIssues.get(segment.segment_id) || [])).join("")
+    : `<div class="empty">No final segments match the current segment issue filters.</div>`;
+
+  document.querySelectorAll("[data-segment-list-id]").forEach((card) => {
+    card.addEventListener("click", () => {
+      state.selectedSegmentId = card.dataset.segmentListId;
+      renderTimeline();
+      renderSegmentList();
+      renderSelectedSegmentDetail();
+      renderIssues();
+    });
+  });
+}
+
+function renderSegmentListCard(segment, issues) {
+  const sortedIssues = [...issues].sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
+  const task = state.tasks.find((item) => item.task_id === segment.task_id);
+  const hasLanguagePolicyIssue = sortedIssues.some((issue) => issue.eval_name === "zion_language_policy_eval");
+  const selected = state.selectedSegmentId === segment.segment_id ? "selected" : "";
+  const issueBadges = sortedIssues.length
+    ? sortedIssues.map((issue) => `<span class="badge ${severityClass(issue.severity)}">${escapeHtml(issueTagName(issue.eval_name))}</span>`).join("")
+    : `<span class="badge low">no segment issues</span>`;
+  const issueDetails = sortedIssues.length
+    ? `<div class="segment-list-issues">
+        ${sortedIssues.map((issue) => `
+          <div class="segment-list-issue">
+            <div class="issue-title">
+              <span>${escapeHtml(issue.eval_name)}</span>
+              <span class="badge ${severityClass(issue.severity)}">${escapeHtml(issue.severity)}</span>
+            </div>
+            <div class="issue-message">${escapeHtml(issue.message || "Issue detected.")}</div>
+            ${issue.eval_name === "timestamp_validity_eval" ? `<div class="issue-evidence"><strong>Problem:</strong> ${escapeHtml(timestampValidityDetail(issue))}</div>` : ""}
+            ${issue.evidence ? `<div class="issue-evidence">${highlightLanguagePolicyTerms(issue.evidence, issue.eval_name === "zion_language_policy_eval")}</div>` : ""}
+            ${issue.suggested_action ? `<div class="issue-evidence"><strong>Suggested action:</strong> ${escapeHtml(issue.suggested_action)}</div>` : ""}
+            ${issue.eval_name === "object_reference_eval" ? renderObjectReferenceProblem(issue, task) : ""}
+          </div>
+        `).join("")}
+      </div>`
+    : "";
+
+  return `
+    <article class="segment-list-card ${selected}" data-segment-list-id="${escapeHtml(segment.segment_id)}">
+      <div class="segment-list-card-header">
+        <div>
+          <h4>Segment ${escapeHtml(segment.array_index)} · phase ${escapeHtml(segment.phase_index)}</h4>
+          <div class="segment-list-time">${fmtTime(segment.start_sec)} - ${fmtTime(segment.end_sec)} · ${fmt(segment.duration_sec, 3)}s</div>
+        </div>
+        <div class="segment-list-badges">${issueBadges}</div>
+      </div>
+      <div class="caption-reader">
+        <div class="caption-label">Caption</div>
+        <p>${highlightLanguagePolicyTerms(segment.caption || "No caption", hasLanguagePolicyIssue)}</p>
+      </div>
+      ${segment.visual_evidence ? `
+        <div class="caption-reader">
+          <div class="caption-label">Visual Evidence</div>
+          <p>${highlightLanguagePolicyTerms(segment.visual_evidence, hasLanguagePolicyIssue)}</p>
+        </div>` : ""}
+      <div class="segment-list-meta">
+        <div class="kv"><span>Segment ID</span><strong>${escapeHtml(segment.segment_id)}</strong></div>
+        <div class="kv"><span>Covered Markers</span><strong>${escapeHtml(Array.isArray(segment.covered_markers) ? segment.covered_markers.join(", ") : segment.covered_markers || "none")}</strong></div>
+      </div>
+      ${issueDetails}
+    </article>`;
 }
 
 function renderAxis(duration, width) {
@@ -2173,6 +2261,8 @@ function renderIssues() {
     el.addEventListener("click", () => {
       state.selectedSegmentId = el.dataset.jumpSegment;
       renderTimeline();
+      renderSegmentList();
+      renderSelectedSegmentDetail();
       renderIssues();
     });
   });
